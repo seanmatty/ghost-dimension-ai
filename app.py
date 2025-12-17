@@ -14,7 +14,7 @@ from streamlit_cropper import st_cropper
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
 
-# --- CUSTOM CSS (THE "SLICK" LOOK - FIXED PADDING) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #050505; color: #e0e0e0; }
@@ -26,7 +26,6 @@ st.markdown("""
     label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label {
         color: #ffffff !important;
         font-weight: 600 !important;
-        font-size: 1rem !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] {
         padding: 25px !important; 
@@ -252,16 +251,26 @@ with d1:
 
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
+    if not sch: st.info("Nothing currently scheduled.")
     for p in sch:
         with st.container(border=True):
-            st.write(f"**{p['scheduled_time']}**")
-            st.image(p['image_url'], width=100)
-            if st.button("❌ ABORT", key=f"can_{p['id']}"):
-                supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
+            col_img, col_txt = st.columns([1, 3])
+            with col_img:
+                st.image(p['image_url'], use_column_width=True)
+            with col_txt:
+                st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
+                st.markdown(f"> {p['caption']}") # Displays the caption in a ghosty quote block
+                if st.button("❌ ABORT & MOVE TO DRAFTS", key=f"can_{p['id']}"):
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
 
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
+    if not hist: st.info("No posting history found.")
     for p in hist:
         with st.container(border=True):
-            st.write(f"**Sent:** {p['scheduled_time']}")
-            st.image(p['image_url'], width=80)
+            col_img, col_txt = st.columns([1, 3])
+            with col_img:
+                st.image(p['image_url'], use_column_width=True)
+            with col_txt:
+                st.write(f"✅ **Sent on:** {p['scheduled_time']}")
+                st.markdown(f"**Caption:**\n{p['caption']}")
