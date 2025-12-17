@@ -45,11 +45,9 @@ def get_best_time_for_day(target_date):
 
 def scrape_website(url):
     """Downloads text from a website link with smart error handling."""
-    # 1. Auto-fix URL if missing https://
     if not url.startswith("http"):
         url = "https://" + url
         
-    # 2. Use a 'Fake ID' (User-Agent) so the site thinks we are a human on Chrome
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -57,14 +55,12 @@ def scrape_website(url):
     try:
         page = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(page.content, "html.parser")
-        
-        # Get all text paragraphs and clean them up
         text = ' '.join([p.text for p in soup.find_all('p')])
         
         if len(text) < 50:
             return "Could not find much text. Maybe try a specific blog post or episode page?"
             
-        return text[:4000] # Limit to 4000 characters
+        return text[:6000] # Increased limit to capture more info
     except Exception as e:
         print(f"Scrape Error: {e}")
         return None
@@ -87,31 +83,45 @@ col_teach, col_create = st.columns([1, 1])
 with col_teach:
     st.subheader("Teach New Knowledge")
     with st.expander("Add a Website Link", expanded=True):
-        st.info("Paste a link to an About page, Blog post, or Episode description.")
+        st.info("Paste a link. I will extract multiple facts.")
         learn_url = st.text_input("Website URL")
         
         if st.button("Analyze & Learn"):
             if not learn_url:
                 st.error("Please paste a URL first.")
             else:
-                with st.spinner("Reading website..."):
+                with st.spinner("Reading and extracting facts..."):
                     raw_text = scrape_website(learn_url)
                     
                     if raw_text and len(raw_text) > 50:
-                        # Ask AI to summarize what it learned
-                        prompt = f"Read this website text and summarize the key 'Ghost Dimension' brand facts in 1 sentence: {raw_text}"
+                        # UPDATED PROMPT: Ask for a LIST
+                        prompt = f"""
+                        Read this text about 'Ghost Dimension'.
+                        Extract 3 to 5 distinct, interesting facts or themes.
+                        Return them as a plain list separated by newlines.
+                        Do not use bullet points or numbers. Just the facts.
+                        TEXT: {raw_text}
+                        """
                         summary_resp = client.chat.completions.create(
                             model="gpt-4", messages=[{"role": "user", "content": prompt}]
                         )
-                        fact = summary_resp.choices[0].message.content
+                        # Split the AI's answer into a list of facts
+                        facts_block = summary_resp.choices[0].message.content
+                        facts_list = facts_block.split('\n')
                         
-                        # Save as Pending
-                        supabase.table("brand_knowledge").insert({
-                            "source_url": learn_url,
-                            "fact_summary": fact,
-                            "status": "pending"
-                        }).execute()
-                        st.success("Learned! Please approve it below.")
+                        # Loop through and save each fact separately
+                        count = 0
+                        for fact in facts_list:
+                            clean_fact = fact.strip().replace("- ", "").replace("* ", "")
+                            if len(clean_fact) > 10: # Ignore empty lines
+                                supabase.table("brand_knowledge").insert({
+                                    "source_url": learn_url,
+                                    "fact_summary": clean_fact,
+                                    "status": "pending"
+                                }).execute()
+                                count += 1
+                                
+                        st.success(f"Successfully extracted {count} new facts! Review them below.")
                         st.rerun()
                     else:
                         st.error("Could not read that website. It might be empty or blocking bots.")
@@ -122,10 +132,10 @@ with col_teach:
         st.warning(f"You have {len(pending_knowledge)} facts waiting for approval:")
         for fact in pending_knowledge:
             with st.container(border=True):
-                st.info(f"AI Learned: {fact['fact_summary']}")
+                st.write(f"**AI Learned:** {fact['fact_summary']}")
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("✅ Approve Fact", key=f"app_{fact['id']}"):
+                    if st.button("✅ Approve", key=f"app_{fact['id']}"):
                         supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
                         st.rerun()
                 with c2:
