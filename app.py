@@ -4,6 +4,7 @@ from openai import OpenAI
 from supabase import create_client
 import requests
 from datetime import datetime, time
+from bs4 import BeautifulSoup # Tool to read websites
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
@@ -28,46 +29,124 @@ def check_password():
 
 if not check_password():
     st.stop()
-# ---------------------
 
 # 2. SETUP
 client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 AYRSHARE_KEY = st.secrets["AYRSHARE_KEY"]
 
-# --- HELPER: BRAIN LOGIC ---
+# --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
-    """
-    1. Looks at the date (e.g. 2023-10-31).
-    2. Figures out the Day Name (e.g. 'Tuesday').
-    3. Asks Database for the best hour.
-    """
-    day_name = target_date.strftime("%A") # e.g. "Monday"
-    
-    # Query the Strategy Table
+    day_name = target_date.strftime("%A")
     response = supabase.table("strategy").select("best_hour").eq("day", day_name).execute()
-    
     if response.data:
-        # If we found a rule (e.g. 19), return that time
-        best_hour = response.data[0]['best_hour']
-        return time(best_hour, 0) # Returns 19:00:00
-    else:
-        # Default to 8 PM if no rule found
-        return time(20, 0)
+        return time(response.data[0]['best_hour'], 0)
+    return time(20, 0)
+
+def scrape_website(url):
+    """Downloads text from a website link."""
+    try:
+        page = requests.get(url, timeout=10)
+        soup = BeautifulSoup(page.content, "html.parser")
+        # Get all text paragraphs
+        text = ' '.join([p.text for p in soup.find_all('p')])
+        return text[:4000] # Limit to 4000 characters so we don't overwhelm AI
+    except Exception as e:
+        return None
+
+def get_brand_knowledge():
+    """Fetches all APPROVED facts about your business."""
+    response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
+    if response.data:
+        # Combine all facts into one big string
+        return "\n".join([f"- {item['fact_summary']}" for item in response.data])
+    return "No knowledge yet. The show is about paranormal investigations."
 
 st.title("👻 Ghost Dimension AI Manager")
 
-# 3. GENERATE NEW POSTS
-with st.expander("Create New Content", expanded=True):
-    topic = st.text_input("What is the topic? (e.g. 'Haunted Asylum Episode')")
-    if st.button("Generate Magic", type="primary"):
+# 3. TEACH & GENERATE SECTION
+st.header("🧠 The Brain")
+
+col_teach, col_create = st.columns([1, 1])
+
+# --- LEFT COLUMN: TEACH THE AI ---
+with col_teach:
+    st.subheader("Teach New Knowledge")
+    with st.expander("Add a Website Link", expanded=False):
+        learn_url = st.text_input("Website URL (e.g. your blog post or episode page)")
+        if st.button("Analyze & Learn"):
+            with st.spinner("Reading website..."):
+                raw_text = scrape_website(learn_url)
+                if raw_text:
+                    # Ask AI to summarize what it learned
+                    prompt = f"Read this website text and summarize the key 'Ghost Dimension' brand facts in 1 sentence: {raw_text}"
+                    summary_resp = client.chat.completions.create(
+                        model="gpt-4", messages=[{"role": "user", "content": prompt}]
+                    )
+                    fact = summary_resp.choices[0].message.content
+                    
+                    # Save as Pending
+                    supabase.table("brand_knowledge").insert({
+                        "source_url": learn_url,
+                        "fact_summary": fact,
+                        "status": "pending"
+                    }).execute()
+                    st.success("Learned! Please approve it below.")
+                    st.rerun()
+                else:
+                    st.error("Could not read that website. Is it valid?")
+
+    # Show Pending Knowledge for Approval
+    pending_knowledge = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
+    if pending_knowledge:
+        st.warning(f"You have {len(pending_knowledge)} facts waiting for approval:")
+        for fact in pending_knowledge:
+            with st.container(border=True):
+                st.info(f"AI Learned: {fact['fact_summary']}")
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Approve Fact", key=f"app_{fact['id']}"):
+                    supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
+                    st.rerun()
+                if c2.button("🗑️ Reject", key=f"rej_{fact['id']}"):
+                    supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute()
+                    st.rerun()
+
+# --- RIGHT COLUMN: CREATE CONTENT ---
+with col_create:
+    st.subheader("Generate Content")
+    
+    # "Suggest Topic" Feature
+    if st.button("🎲 Suggest a Topic from Knowledge"):
+        with st.spinner("Thinking..."):
+            knowledge = get_brand_knowledge()
+            prompt = f"Based on this knowledge about Ghost Dimension:\n{knowledge}\n\nSuggest ONE spooky, engaging social media topic or question for a post."
+            suggestion_resp = client.chat.completions.create(
+                model="gpt-4", messages=[{"role": "user", "content": prompt}]
+            )
+            # We put the suggestion into the session state so it fills the text box
+            st.session_state['suggested_topic'] = suggestion_resp.choices[0].message.content
+            st.rerun()
+
+    # The Topic Input (Pre-filled if they clicked Suggest)
+    default_topic = st.session_state.get('suggested_topic', '')
+    topic = st.text_area("Topic to write about:", value=default_topic, height=100)
+    
+    if st.button("Generate Post", type="primary"):
         with st.spinner("AI is writing and painting..."):
             try:
+                # 1. Fetch Brand Knowledge to make the post smarter
+                knowledge_context = get_brand_knowledge()
+                
                 # A. Write Caption
-                prompt = f"Write a scary, viral Instagram caption about {topic}. Use hashtags."
+                prompt = f"""
+                You are the social media manager for 'Ghost Dimension'.
+                BRAND KNOWLEDGE: {knowledge_context}
+                
+                TASK: Write a scary, viral Instagram caption about: {topic}. 
+                Use emojis and hashtags. Keep it professional but spooky.
+                """
                 gpt_resp = client.chat.completions.create(
-                    model="gpt-4", 
-                    messages=[{"role": "user", "content": prompt}]
+                    model="gpt-4", messages=[{"role": "user", "content": prompt}]
                 )
                 caption_text = gpt_resp.choices[0].message.content
                 
@@ -83,14 +162,15 @@ with st.expander("Create New Content", expanded=True):
                 # C. Save to Database
                 data = {"caption": caption_text, "image_url": image_url, "topic": topic, "status": "draft"}
                 supabase.table("social_posts").insert(data).execute()
-                st.success("Draft created! Check the Review tab below.")
+                st.success("Draft created! Check the Dashboard below.")
                 
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
-# 4. DASHBOARD
-st.header("Content Dashboard")
-tab1, tab2 = st.tabs(["📝 Drafts (Needs Review)", "📅 Scheduled (Waiting)"])
+# 4. DASHBOARD (Review & Schedule)
+st.divider()
+st.header("📲 Content Schedule")
+tab1, tab2 = st.tabs(["📝 Drafts", "📅 Scheduled"])
 
 # --- TAB 1: DRAFTS ---
 with tab1:
@@ -98,80 +178,63 @@ with tab1:
     drafts = response.data
 
     if not drafts:
-        st.info("No drafts pending. Generate more above!")
+        st.info("No drafts pending.")
 
     for post in drafts:
         container = st.empty()
         with container.container():
             st.divider()
             col1, col2 = st.columns([1, 2])
-            
             with col1:
                 if post.get('image_url'):
                     st.image(post['image_url'], use_column_width=True)
-            
             with col2:
-                new_cap = st.text_area("Caption", post['caption'], height=200, key=f"cap_{post['id']}")
-                st.write("📅 **Optimization Strategy**")
-                
+                new_cap = st.text_area("Caption", post['caption'], height=150, key=f"cap_{post['id']}")
                 d_col, t_col = st.columns(2)
                 with d_col:
-                    # Default to Today
                     d = st.date_input("Date", key=f"d_{post['id']}")
                 
-                # --- AI TIME SUGGESTION ---
-                # We calculate the suggested time based on the date selected above
+                # AI Time Suggestion
                 suggested_time = get_best_time_for_day(d)
-                
                 with t_col:
-                    t = st.time_input(f"Time (AI suggests {suggested_time})", value=suggested_time, key=f"t_{post['id']}")
+                    t = st.time_input(f"Time (Best: {suggested_time})", value=suggested_time, key=f"t_{post['id']}")
                 
                 final_time = f"{d} {t}"
                 
-                st.write("---")
-                btn_col1, btn_col2 = st.columns(2)
-                
-                with btn_col1:
-                    if st.button("✅ Approve & Schedule", key=f"btn_{post['id']}", type="primary"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ Schedule", key=f"btn_{post['id']}", type="primary"):
                         supabase.table("social_posts").update({
-                            "caption": new_cap, 
-                            "scheduled_time": final_time, 
-                            "status": "scheduled"
+                            "caption": new_cap, "scheduled_time": final_time, "status": "scheduled"
                         }).eq("id", post['id']).execute()
-                        st.success("Moved to Schedule!")
+                        st.success("Scheduled!")
                         container.empty()
                         st.rerun()
-                
-                with btn_col2:
-                    if st.button("🗑️ Delete Draft", key=f"del_{post['id']}"):
+                with c2:
+                    if st.button("🗑️ Delete", key=f"del_{post['id']}"):
                         supabase.table("social_posts").delete().eq("id", post['id']).execute()
-                        st.error("Draft Deleted.")
+                        st.error("Deleted.")
                         container.empty()
                         st.rerun()
 
 # --- TAB 2: SCHEDULED ---
 with tab2:
-    st.write("These posts are queued for the robot.")
     response = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute()
     scheduled = response.data
     
     if not scheduled:
-        st.info("Nothing scheduled yet.")
+        st.info("Nothing scheduled.")
         
     for post in scheduled:
-        container = st.empty()
-        with container.container():
+        with st.container():
             st.divider()
-            col1, col2 = st.columns([1, 3])
-            with col1:
+            c1, c2 = st.columns([1, 3])
+            with c1:
                 if post.get('image_url'):
-                    st.image(post['image_url'], width=150)
-            with col2:
+                    st.image(post['image_url'], width=100)
+            with c2:
                 st.subheader(f"Due: {post['scheduled_time']} UTC")
                 st.text(post['caption'])
-                
-                if st.button("❌ Cancel & Edit", key=f"cancel_{post['id']}"):
+                if st.button("❌ Cancel", key=f"cancel_{post['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute()
-                    st.warning("Moved back to Drafts tab!")
-                    container.empty()
                     st.rerun()
