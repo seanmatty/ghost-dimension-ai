@@ -45,55 +45,80 @@ with st.expander("Create New Content"):
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
-# 3. REVIEW DASHBOARD
-st.header("Weekly Review Queue")
+# 3. DASHBOARD WITH TABS
+st.header("Content Dashboard")
 
-# Helper function to refresh
-def reload_page():
-    try:
-        st.rerun()
-    except AttributeError:
-        st.experimental_rerun()
+# Create two tabs for better organization
+tab1, tab2 = st.tabs(["📝 Drafts (Needs Review)", "📅 Scheduled (Waiting)"])
 
-try:
+# --- TAB 1: DRAFTS ---
+with tab1:
     # Fetch drafts
     response = supabase.table("social_posts").select("*").eq("status", "draft").execute()
-    posts = response.data
+    drafts = response.data
 
-    if not posts:
-        st.success("🎉 All caught up! No drafts waiting.")
-    
-    for post in posts:
-        post_container = st.empty()
-        with post_container.container():
+    if not drafts:
+        st.info("No drafts pending. Generate more above!")
+
+    for post in drafts:
+        # Placeholder for visual cleanup
+        container = st.empty()
+        with container.container():
             st.divider()
             col1, col2 = st.columns([1, 2])
-            
             with col1:
                 if post.get('image_url'):
                     st.image(post['image_url'], width=300)
-            
             with col2:
                 new_cap = st.text_area("Caption", post['caption'], key=f"cap_{post['id']}")
-                
                 st.write("📅 **When should this go out?**")
                 d = st.date_input("Date", key=f"d_{post['id']}")
                 t = st.time_input("Time (UTC)", key=f"t_{post['id']}")
-                
-                # Combine Date+Time for the database
                 final_time = f"{d} {t}"
                 
                 if st.button("Approve & Schedule", key=f"btn_{post['id']}"):
-                    # 1. Update Database ONLY (Don't call Ayrshare yet)
                     supabase.table("social_posts").update({
                         "caption": new_cap,
-                        "scheduled_time": final_time, # Store the time
-                        "status": "scheduled"         # Mark as ready for the robot
+                        "scheduled_time": final_time,
+                        "status": "scheduled"
                     }).eq("id", post['id']).execute()
                     
-                    st.success(f"Saved! Will auto-post on {final_time} UTC")
-                    post_container.empty()
-                    reload_page()
+                    st.success(f"Moved to Schedule!")
+                    container.empty() # Remove from view
+                    try: st.rerun() 
+                    except: st.experimental_rerun()
 
-except Exception as e:
-    st.error(f"Error: {e}")
+# --- TAB 2: SCHEDULED ---
+with tab2:
+    st.write("These posts are queued for the robot.")
+    # Fetch scheduled posts
+    response = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute()
+    scheduled = response.data
+    
+    if not scheduled:
+        st.info("Nothing scheduled yet.")
+        
+    for post in scheduled:
+        container = st.empty()
+        with container.container():
+            st.divider()
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if post.get('image_url'):
+                    st.image(post['image_url'], width=150)
+            with col2:
+                st.subheader(f"Due: {post['scheduled_time']} UTC")
+                st.text(post['caption'])
+                
+                # CANCEL BUTTON
+                if st.button("❌ Cancel & Edit", key=f"cancel_{post['id']}"):
+                    # Move back to draft
+                    supabase.table("social_posts").update({
+                        "status": "draft"
+                    }).eq("id", post['id']).execute()
+                    
+                    st.warning("Moved back to Drafts tab!")
+                    container.empty()
+                    try: st.rerun() 
+                    except: st.experimental_rerun()
+
