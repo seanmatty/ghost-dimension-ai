@@ -5,7 +5,7 @@ from google import genai
 from google.genai import types
 from supabase import create_client
 import requests
-from datetime import datetime, time
+from datetime import datetime, time, timedelta  # Added timedelta for cleanup
 from bs4 import BeautifulSoup
 import random
 import urllib.parse
@@ -16,7 +16,7 @@ from streamlit_cropper import st_cropper
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
 
-# --- CUSTOM CSS (Updated for visibility) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #050505; color: #e0e0e0; }
@@ -25,12 +25,10 @@ st.markdown("""
         font-family: 'Helvetica Neue', sans-serif;
         text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
     }
-    /* Labels and Headers */
     label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label {
         color: #ffffff !important;
         font-weight: 600 !important;
     }
-    /* Containers */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         padding: 25px !important; 
         background-color: #121212;
@@ -38,11 +36,9 @@ st.markdown("""
         margin-bottom: 20px;
         border: 1px solid #333; 
     }
-    /* Input Fields */
     .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
         background-color: #1c1c1c !important; color: white !important; border: 1px solid #333 !important; border-radius: 8px;
     }
-    /* Standard Buttons (Fixing the Grey-on-White issue) */
     .stButton > button {
         background-color: #1c1c1c !important; 
         color: #00ff41 !important; 
@@ -56,14 +52,12 @@ st.markdown("""
         color: #000000 !important; 
         box-shadow: 0 0 15px rgba(0, 255, 65, 0.7);
     }
-    /* Primary Buttons (Post Now / Save) */
     button[kind="primary"] {
         background-color: #00ff41 !important; 
         color: black !important; 
         border: none !important; 
         font-weight: bold !important;
     }
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { background-color: #1c1c1c; border-radius: 5px; color: #888; }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
@@ -127,31 +121,29 @@ def save_ai_image_to_storage(image_bytes):
         return None
 
 def enhance_topic(topic, style):
-    prompt = f"""Rewrite this into a technical prompt for a high-end image generator (Imagen 3).
+    prompt = f"""Rewrite this into a technical prompt for a high-end image generator (Imagen 4 Ultra).
     Topic: {topic}
     Style: {style}
-    Instructions:
-    - Describe the camera gear (CCTV, 35mm, Daguerreotype).
-    - Add paranormal details (shadow person, translucent figure).
-    - Add technical artifacts (noise, grain, motion blur).
-    - Maintain a realistic 'Evidence' feel.
-    - Max 50 words."""
+    Instructions: Gear: CCTV, 35mm, or Daguerreotype. Artifacts: noise, grain, motion blur. 
+    Maintain realistic evidence feel. Max 50 words."""
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
 def get_caption_prompt(style, topic_or_desc, context):
     base_prompt = f"Role: Social Media Manager for 'Ghost Dimension'. Context: {context}. Topic: {topic_or_desc}. "
     strategies = {
-        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. Start a fight in the comments. Ask 'Real or Fake?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on a specific scary detail. Ask the user to zoom in.",
-        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Atmospheric.",
-        "😱 Pure Panic (Short & Scary)": "Very short, terrified caption. Use uppercase and emojis like ⚠️👻."
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. Ask 'Real or Fake?'.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a specific scary detail. Ask them to zoom in.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story.",
+        "😱 Pure Panic (Short & Scary)": "Very short, terrified caption. Use uppercase and ⚠️👻."
     }
     instruction = strategies.get(style, strategies["🔥 Viral / Debate (Ask Questions)"])
     return f"{base_prompt} \n\nSTRATEGY: {instruction}"
 
-# --- MAIN TITLE ---
-st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA ENGINE</span></h1>", unsafe_allow_html=True)
+# --- MAIN TITLE & COUNTER ---
+total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
+st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center; color: #888;'>Captured Evidence: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # 3. CONTENT CREATION AREA
 tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 EVIDENCE VAULT"])
@@ -216,7 +208,7 @@ with tab_gen:
             caption_style = st.selectbox("Caption Strategy", ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"])
 
             if st.button("🚀 GENERATE WITH NANO", type="primary"):
-                with st.spinner("Invoking Imagen 3..."):
+                with st.spinner("Invoking Imagen 4 Ultra..."):
                     try:
                         knowledge = get_brand_knowledge()
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
@@ -309,12 +301,33 @@ with d3:
                 st.write(f"✅ **Sent on:** {p['scheduled_time']}")
                 st.markdown(f"**Caption:**\n{p['caption']}")
 
-
-
-
-
-
-
-
-
-
+# --- NEW: SYSTEM MAINTENANCE SECTION ---
+st.markdown("---")
+with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE"):
+    st.warning("Archive Policy: You can manually purge 'posted' content older than 60 days to save vault space.")
+    col_stat, col_act = st.columns(2)
+    
+    # 1. Check for old evidence
+    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+    old_data = supabase.table("social_posts").select("id, image_url").eq("status", "posted").lt("created_at", sixty_days_ago).execute().data
+    
+    with col_stat:
+        st.write(f"📂 **Overdue for Purge:** {len(old_data)} files")
+        
+    with col_act:
+        if len(old_data) > 0:
+            if st.button("🔥 INCINERATE OLD EVIDENCE", help="This will delete images from Storage and Database permanently."):
+                with st.spinner("Purging vault..."):
+                    try:
+                        # Extract filenames from URLs
+                        filenames = [url['image_url'].split('/')[-1] for url in old_data]
+                        # Delete from Storage Bucket
+                        supabase.storage.from_("uploads").remove(filenames)
+                        # Delete from Database
+                        ids_to_del = [item['id'] for item in old_data]
+                        supabase.table("social_posts").delete().in_("id", ids_to_del).execute()
+                        st.success(f"Successfully purged {len(old_data)} records!"); st.rerun()
+                    except Exception as e:
+                        st.error(f"Purge failed: {e}")
+        else:
+            st.write("✅ Vault is clean. No records older than 60 days.")
