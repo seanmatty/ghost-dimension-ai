@@ -104,33 +104,54 @@ with tab_gen:
                         st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB B: UPLOAD & AUTO-CAPTION (UPDATED) ---
+# --- TAB B: UPLOAD & AUTO-CAPTION (FIXED!) ---
 with tab_upload:
     c1, c2 = st.columns([1, 1])
     
     with c1:
         st.subheader("1. Upload Evidence")
+        
+        # --- THE FIX: MEMORY CHECK ---
+        if 'last_upload' not in st.session_state:
+            st.session_state.last_upload = None
+            
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
-        if uploaded_file is not None:
-            try:
-                file_bytes = uploaded_file.getvalue()
-                # Create unique filename
-                file_path = f"evidence_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
-                supabase.storage.from_("uploads").upload(file_path, file_bytes, {"content-type": uploaded_file.type})
-                public_url = supabase.storage.from_("uploads").get_public_url(file_path)
-                supabase.table("uploaded_images").insert({"file_url": public_url, "filename": uploaded_file.name}).execute()
-                st.success("Uploaded!")
-                st.rerun() # Refresh to show thumbnail immediately
-            except Exception as e:
-                st.error(f"Upload failed: {e}")
+        
+        # Reset memory if user clears the box
+        if uploaded_file is None:
+            st.session_state.last_upload = None
+            
+        # Only run upload IF file exists AND it's different from the last one
+        if uploaded_file is not None and st.session_state.last_upload != uploaded_file.name:
+            with st.spinner("Uploading to secure vault..."):
+                try:
+                    file_bytes = uploaded_file.getvalue()
+                    # Create unique filename
+                    file_path = f"evidence_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
+                    
+                    # Upload
+                    supabase.storage.from_("uploads").upload(file_path, file_bytes, {"content-type": uploaded_file.type})
+                    
+                    # Get Public URL
+                    public_url = supabase.storage.from_("uploads").get_public_url(file_path)
+                    
+                    # Save to DB
+                    supabase.table("uploaded_images").insert({"file_url": public_url, "filename": uploaded_file.name}).execute()
+                    
+                    # MARK AS DONE TO STOP LOOP
+                    st.session_state.last_upload = uploaded_file.name
+                    
+                    st.success("Uploaded!")
+                    st.rerun() # Force instant refresh
+                except Exception as e:
+                    st.error(f"Upload failed: {e}")
 
-        # --- NEW: THUMBNAIL GALLERY ---
+        # --- THUMBNAIL GALLERY ---
         st.divider()
         st.write("📂 **Evidence Library** (Click 🗑️ to delete)")
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
         
         if library:
-            # Create a Grid
             cols = st.columns(3)
             for idx, img in enumerate(library):
                 with cols[idx % 3]:
