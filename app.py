@@ -1,11 +1,11 @@
 import streamlit as st
-from openai import OpenAI # <--- CHANGED THIS
+from openai import OpenAI
 from supabase import create_client
 import requests
 
 # 1. SETUP: Connect to all your accounts
-# Initialize the OpenAI Client (New v1.0 requirement)
-client = OpenAI(api_key=st.secrets["OPENAI_KEY"]) # <--- CHANGED THIS
+# Initialize the OpenAI Client
+client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
 
 # Connect Supabase
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
@@ -19,17 +19,16 @@ with st.expander("Create New Content"):
     if st.button("Generate Magic"):
         with st.spinner("AI is writing and painting..."):
             try:
-                # A. Write Caption (UPDATED CODE)
+                # A. Write Caption
                 prompt = f"Write a scary, viral Instagram caption about {topic}. Use hashtags."
-                gpt_resp = client.chat.completions.create( # <--- CHANGED THIS
+                gpt_resp = client.chat.completions.create(
                     model="gpt-4", 
                     messages=[{"role": "user", "content": prompt}]
                 )
                 caption_text = gpt_resp.choices[0].message.content
                 
-                # B. Create Image (UPDATED CODE)
-                # Note: We use the client.images.generate method now
-                img_resp = client.images.generate( # <--- CHANGED THIS
+                # B. Create Image
+                img_resp = client.images.generate(
                     model="dall-e-3", 
                     prompt=f"Realistic paranormal investigation photo of {topic}. Style: Night vision green tint, grainy CCTV footage look, dramatic lighting, shadows, 4k resolution, in the style of the TV show Ghost Dimension.", 
                     n=1,
@@ -85,8 +84,7 @@ with tab1:
                     
                     st.success(f"Moved to Schedule!")
                     container.empty() # Remove from view
-                    try: st.rerun() 
-                    except: st.experimental_rerun()
+                    st.rerun()
 
 # --- TAB 2: SCHEDULED ---
 with tab2:
@@ -119,6 +117,4 @@ with tab2:
                     
                     st.warning("Moved back to Drafts tab!")
                     container.empty()
-                    try: st.rerun() 
-                    except: st.experimental_rerun()
-
+                    st.rerun()
