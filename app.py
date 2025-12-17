@@ -3,41 +3,57 @@ import hmac
 from openai import OpenAI
 from supabase import create_client
 import requests
+from datetime import datetime, time
 
-# 1. PAGE CONFIG (Must be the first Streamlit command)
+# 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
 
 # --- SECURITY GATE ---
 def check_password():
     """Returns `True` if the user had the correct password."""
-    
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
         if hmac.compare_digest(st.session_state["password"], st.secrets["ADMIN_PASSWORD"]):
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store password
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if st.session_state.get("password_correct", False):
         return True
 
-    # Show input for password
-    st.text_input(
-        "Password", type="password", on_change=password_entered, key="password"
-    )
+    st.text_input("Password", type="password", on_change=password_entered, key="password")
     if "password_correct" in st.session_state:
         st.error("😕 Password incorrect")
     return False
 
 if not check_password():
-    st.stop()  # STOP HERE if password is wrong
+    st.stop()
 # ---------------------
 
-# 2. SETUP: Connect to all your accounts
+# 2. SETUP
 client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 AYRSHARE_KEY = st.secrets["AYRSHARE_KEY"]
+
+# --- HELPER: BRAIN LOGIC ---
+def get_best_time_for_day(target_date):
+    """
+    1. Looks at the date (e.g. 2023-10-31).
+    2. Figures out the Day Name (e.g. 'Tuesday').
+    3. Asks Database for the best hour.
+    """
+    day_name = target_date.strftime("%A") # e.g. "Monday"
+    
+    # Query the Strategy Table
+    response = supabase.table("strategy").select("best_hour").eq("day", day_name).execute()
+    
+    if response.data:
+        # If we found a rule (e.g. 19), return that time
+        best_hour = response.data[0]['best_hour']
+        return time(best_hour, 0) # Returns 19:00:00
+    else:
+        # Default to 8 PM if no rule found
+        return time(20, 0)
 
 st.title("👻 Ghost Dimension AI Manager")
 
@@ -72,14 +88,12 @@ with st.expander("Create New Content", expanded=True):
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
-# 4. DASHBOARD WITH TABS
+# 4. DASHBOARD
 st.header("Content Dashboard")
-
 tab1, tab2 = st.tabs(["📝 Drafts (Needs Review)", "📅 Scheduled (Waiting)"])
 
 # --- TAB 1: DRAFTS ---
 with tab1:
-    # Fetch drafts
     response = supabase.table("social_posts").select("*").eq("status", "draft").execute()
     drafts = response.data
 
@@ -98,39 +112,39 @@ with tab1:
             
             with col2:
                 new_cap = st.text_area("Caption", post['caption'], height=200, key=f"cap_{post['id']}")
-                st.write("📅 **When should this go out?**")
+                st.write("📅 **Optimization Strategy**")
                 
-                # Date/Time Columns
                 d_col, t_col = st.columns(2)
                 with d_col:
+                    # Default to Today
                     d = st.date_input("Date", key=f"d_{post['id']}")
+                
+                # --- AI TIME SUGGESTION ---
+                # We calculate the suggested time based on the date selected above
+                suggested_time = get_best_time_for_day(d)
+                
                 with t_col:
-                    t = st.time_input("Time (UTC)", key=f"t_{post['id']}")
+                    t = st.time_input(f"Time (AI suggests {suggested_time})", value=suggested_time, key=f"t_{post['id']}")
                 
                 final_time = f"{d} {t}"
                 
                 st.write("---")
-                
-                # BUTTONS: Approve vs Delete
                 btn_col1, btn_col2 = st.columns(2)
                 
                 with btn_col1:
                     if st.button("✅ Approve & Schedule", key=f"btn_{post['id']}", type="primary"):
                         supabase.table("social_posts").update({
-                            "caption": new_cap,
-                            "scheduled_time": final_time,
+                            "caption": new_cap, 
+                            "scheduled_time": final_time, 
                             "status": "scheduled"
                         }).eq("id", post['id']).execute()
-                        
                         st.success("Moved to Schedule!")
                         container.empty()
                         st.rerun()
                 
                 with btn_col2:
                     if st.button("🗑️ Delete Draft", key=f"del_{post['id']}"):
-                        # DELETE FROM DATABASE
                         supabase.table("social_posts").delete().eq("id", post['id']).execute()
-                        
                         st.error("Draft Deleted.")
                         container.empty()
                         st.rerun()
@@ -157,10 +171,7 @@ with tab2:
                 st.text(post['caption'])
                 
                 if st.button("❌ Cancel & Edit", key=f"cancel_{post['id']}"):
-                    supabase.table("social_posts").update({
-                        "status": "draft"
-                    }).eq("id", post['id']).execute()
-                    
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute()
                     st.warning("Moved back to Drafts tab!")
                     container.empty()
                     st.rerun()
