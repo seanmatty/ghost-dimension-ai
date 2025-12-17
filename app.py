@@ -30,11 +30,16 @@ st.markdown("""
         text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
     }
     
-    /* FIX: INPUT LABELS - FORCE WHITE TEXT */
-    .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label, p {
+    /* FIX: INPUT LABELS - FORCE BRIGHT WHITE TEXT */
+    label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label {
         color: #ffffff !important;
-        font-weight: 600;
-        font-size: 1rem;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+    }
+    
+    /* Small helper text */
+    .stMarkdown p {
+        color: #cccccc;
     }
 
     /* INPUT FIELDS: Dark Grey with Green Border */
@@ -151,7 +156,7 @@ with tab_gen:
     with st.container(border=True):
         c_head, c_body = st.columns([1, 2])
         
-        # --- FIXED LEARNING SECTION ---
+        # --- LEFT: BRAIN MANAGER ---
         with c_head:
             st.info("🧠 **Knowledge Base**")
             
@@ -159,7 +164,7 @@ with tab_gen:
             learn_t1, learn_t2 = st.tabs(["🔗 Via URL", "📝 Paste Text"])
             
             with learn_t1:
-                learn_url = st.text_input("Website URL", label_visibility="collapsed", placeholder="https://...")
+                learn_url = st.text_input("Website URL", label_visibility="visible", placeholder="https://...")
                 if st.button("📥 Scrape Site"):
                     with st.spinner("Scraping..."):
                         raw_text = scrape_website(learn_url)
@@ -170,12 +175,12 @@ with tab_gen:
                                 clean = fact.strip().replace("- ", "")
                                 if len(clean) > 10:
                                     supabase.table("brand_knowledge").insert({"source_url": learn_url, "fact_summary": clean, "status": "pending"}).execute()
-                            st.success("Facts Learned!")
+                            st.success("Facts Learned! Review below.")
                             st.rerun()
                         else: st.error("Site Blocked. Use 'Paste Text' tab.")
 
             with learn_t2:
-                manual_text = st.text_area("Paste text manually here", height=100, label_visibility="collapsed")
+                manual_text = st.text_area("Paste text manually here", height=100)
                 if st.button("📥 Learn Text"):
                     with st.spinner("Processing..."):
                         if len(manual_text) > 20:
@@ -185,10 +190,32 @@ with tab_gen:
                                 clean = fact.strip().replace("- ", "")
                                 if len(clean) > 10:
                                     supabase.table("brand_knowledge").insert({"source_url": "Manual Paste", "fact_summary": clean, "status": "pending"}).execute()
-                            st.success("Facts Learned!")
+                            st.success("Facts Learned! Review below.")
                             st.rerun()
+            
+            # --- PENDING FACTS REVIEW SECTION (NEW!) ---
+            st.divider()
+            st.write("🔍 **Pending Approval**")
+            pending_facts = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
+            
+            if pending_facts:
+                for fact in pending_facts:
+                    with st.container(border=True):
+                        st.caption(f"Source: {fact['source_url']}")
+                        st.write(f"_{fact['fact_summary']}_")
+                        b1, b2 = st.columns(2)
+                        with b1:
+                            if st.button("✅ Approve", key=f"app_{fact['id']}"):
+                                supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
+                                st.rerun()
+                        with b2:
+                            if st.button("❌ Reject", key=f"rej_{fact['id']}"):
+                                supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute()
+                                st.rerun()
+            else:
+                st.caption("No new facts waiting.")
 
-        # --- GENERATE SECTION ---
+        # --- RIGHT: GENERATE SECTION ---
         with c_body:
             st.subheader("Create Content")
             topic = st.text_area("What is the subject?", placeholder="e.g. The hanging dolls of Pluckley Village...", height=100)
