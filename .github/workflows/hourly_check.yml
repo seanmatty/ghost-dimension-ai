@@ -2,7 +2,7 @@ name: Ghost Dimension Scheduler
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Runs every hour at minute 0
+    - cron: '*/30 * * * *'  # Runs every 30 minutes
   workflow_dispatch:      # Allows you to click a button to test it manually
 
 jobs:
