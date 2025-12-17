@@ -1,6 +1,8 @@
 import streamlit as st
 import hmac
 from openai import OpenAI
+from google import genai
+from google.genai import types
 from supabase import create_client
 import requests
 from datetime import datetime, time
@@ -71,7 +73,8 @@ def check_password():
 if not check_password(): st.stop()
 
 # 2. SETUP
-client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
+openai_client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
+google_client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
@@ -98,35 +101,45 @@ def get_brand_knowledge():
     if response.data: return "\n".join([f"- {item['fact_summary']}" for item in response.data])
     return "No knowledge yet."
 
-def save_ai_image_to_storage(image_url):
-    """Downloads DALL-E image and re-uploads it to Supabase for permanent storage."""
+def save_ai_image_to_storage(image_bytes):
     try:
-        response = requests.get(image_url)
-        if response.status_code == 200:
-            file_bits = response.content
-            filename = f"ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            supabase.storage.from_("uploads").upload(filename, file_bits, {"content-type": "image/png"})
-            return supabase.storage.from_("uploads").get_public_url(filename)
+        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        supabase.storage.from_("uploads").upload(filename, image_bytes, {"content-type": "image/png"})
+        return supabase.storage.from_("uploads").get_public_url(filename)
     except Exception as e:
-        st.error(f"Failed to secure AI image: {e}")
-    return image_url 
+        st.error(f"Failed to secure Nano image: {e}")
+        return None
+
+def enhance_topic(topic, style):
+    """Uses GPT-4o-mini to turn a simple topic into a technical photography prompt."""
+    prompt = f"""Rewrite this into a technical prompt for a high-end image generator (Imagen 3).
+    Topic: {topic}
+    Style: {style}
+    Instructions:
+    - Describe the camera gear (CCTV, 35mm, Daguerreotype).
+    - Add paranormal details (shadow person, translucent figure, light orbs).
+    - Add technical artifacts (noise, grain, motion blur, lens flare).
+    - Maintain a realistic 'Evidence' feel. No CGI or digital art.
+    - Max 50 words."""
+    resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
+    return resp.choices[0].message.content
 
 def get_caption_prompt(style, topic_or_desc, context):
     base_prompt = f"Role: Social Media Manager for 'Ghost Dimension'. Context: {context}. Topic: {topic_or_desc}. "
     strategies = {
-        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. Start a fight in the comments. Ask 'Real or Fake?'. Ask 'What would you do?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on a specific scary detail. Ask the user to zoom in. Ask 'Do you see what I see?'.",
-        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Atmospheric and ends on a cliffhanger.",
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. Start a fight in the comments. Ask 'Real or Fake?'.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a specific scary detail. Ask the user to zoom in.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Atmospheric.",
         "😱 Pure Panic (Short & Scary)": "Very short, terrified caption. Use uppercase and emojis like ⚠️👻."
     }
     instruction = strategies.get(style, strategies["🔥 Viral / Debate (Ask Questions)"])
     return f"{base_prompt} \n\nSTRATEGY: {instruction}"
 
 # --- MAIN TITLE ---
-st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>👻 GHOST DIMENSION <span style='color: white; font-size: 20px;'>AI SYSTEM</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA ENGINE</span></h1>", unsafe_allow_html=True)
 
 # 3. CONTENT CREATION AREA
-tab_gen, tab_upload = st.tabs(["✨ GENERATE NEW", "📸 EVIDENCE ANALYSIS"])
+tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 EVIDENCE VAULT"])
 
 with tab_gen:
     with st.container(border=True):
@@ -140,7 +153,7 @@ with tab_gen:
                     raw_text = scrape_website(learn_url)
                     if raw_text:
                         prompt = f"Extract 3-5 facts about 'Ghost Dimension' from this:\n{raw_text}"
-                        resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}])
+                        resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}])
                         for fact in resp.choices[0].message.content.split('\n'):
                             clean = fact.strip().replace("- ", "")
                             if len(clean) > 10:
@@ -150,7 +163,7 @@ with tab_gen:
                 m_text = st.text_area("Paste Text", height=100, label_visibility="collapsed")
                 if st.button("📥 Learn"):
                     prompt = f"Extract 3-5 facts about 'Ghost Dimension' from this:\n{m_text}"
-                    resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}])
+                    resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}])
                     for fact in resp.choices[0].message.content.split('\n'):
                         clean = fact.strip().replace("- ", "")
                         if len(clean) > 10:
@@ -172,37 +185,48 @@ with tab_gen:
                             supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute(); st.rerun()
 
         with c_body:
-            st.subheader("Create Content")
-            topic = st.text_area("Subject:", placeholder="Topic...", height=100)
+            st.subheader("Nano Banana Realism")
+            
+            # --- THE ENHANCER UI ---
+            if "enhanced_topic" not in st.session_state: st.session_state.enhanced_topic = ""
+            
+            topic = st.text_area("Subject:", value=st.session_state.enhanced_topic if st.session_state.enhanced_topic else "", placeholder="e.g. A shadow figure at the end of a long hospital corridor...", height=100)
+            
             c1, c2 = st.columns(2)
             with c1:
-                style_choice = st.selectbox("Visual Style", ["🟢 CCTV / Night Vision", "🎬 Cinematic Horror", "📸 Vintage Photograph", "🎄 Christmas Horror", "🎃 Halloween Vibes", "❄️ Deep Winter", "☀️ Midsummer Nightmare"])
+                style_choice = st.selectbox("Visual Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
             with c2:
-                caption_style = st.selectbox("Caption Strategy", ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"])
-            
-            style_prompts = {
-                "🟢 CCTV / Night Vision": "Night vision green, grainy CCTV footage.",
-                "🎬 Cinematic Horror": "High budget movie screenshot, 4k, hyperrealistic.",
-                "📸 Vintage Photograph": "1920s spirit photo, sepia, damaged.",
-                "🎄 Christmas Horror": "Twisted holiday, snow, Krampus vibe.",
-                "🎃 Halloween Vibes": "Pumpkin orange, autumn, thick fog.",
-                "❄️ Deep Winter": "Frozen horror, ice, blue tones.",
-                "☀️ Midsummer Nightmare": "Bright folk horror, heat haze."
-            }
+                if st.button("🪄 ENHANCE DETAILS", help="Uses AI to add technical photography details to your prompt"):
+                    with st.spinner("Refining..."):
+                        st.session_state.enhanced_topic = enhance_topic(topic, style_choice)
+                        st.rerun()
 
-            if st.button("🚀 GENERATE DRAFT", type="primary"):
-                with st.spinner("Summoning AI..."):
+            caption_style = st.selectbox("Caption Strategy", ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"])
+
+            if st.button("🚀 GENERATE WITH NANO", type="primary"):
+                with st.spinner("Invoking Imagen 3..."):
                     try:
+                        # 1. Caption
                         knowledge = get_brand_knowledge()
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
-                        cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
+                        cap_resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
                         
-                        img_resp = client.images.generate(model="dall-e-3", prompt=f"{topic}. {style_prompts[style_choice]}", size="1024x1024", quality="hd")
-                        perm_url = save_ai_image_to_storage(img_resp.data[0].url)
+                        # 2. Nano Banana Image
+                        img_resp = google_client.models.generate_images(
+                            model='imagen-3.0-generate-002',
+                            prompt=topic, # We use the enhanced prompt directly
+                            config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT")
+                        )
                         
-                        supabase.table("social_posts").insert({"caption": caption, "image_url": perm_url, "topic": topic, "status": "draft"}).execute()
-                        st.success("Draft Created!"); st.rerun()
+                        # 3. Secure and Save
+                        raw_bytes = img_resp.generated_images[0].image.image_bytes
+                        perm_url = save_ai_image_to_storage(raw_bytes)
+                        
+                        if perm_url:
+                            supabase.table("social_posts").insert({"caption": caption, "image_url": perm_url, "topic": topic, "status": "draft"}).execute()
+                            st.session_state.enhanced_topic = "" # Reset for next post
+                            st.success("Draft Created!"); st.rerun()
                     except Exception as e: st.error(e)
 
 with tab_upload:
@@ -212,20 +236,22 @@ with tab_upload:
         f = st.file_uploader("Drop Evidence", type=['jpg', 'png', 'jpeg'])
         if f:
             image = ImageOps.exif_transpose(Image.open(f))
+            max_size = 1200
+            if max(image.size) > max_size: image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
             cropped_img = st_cropper(image, aspect_ratio=(1, 1), box_color='#00ff41', should_resize_image=True)
             if st.button("✅ SAVE TO VAULT", type="primary"):
                 if cropped_img.mode != "RGB": cropped_img = cropped_img.convert("RGB")
                 final_img = cropped_img.resize((1080, 1080))
-                buf = io.BytesIO(); final_img.save(buf, format="JPEG", quality=95)
-                fname = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                supabase.storage.from_("uploads").upload(f"evidence_{fname}", buf.getvalue(), {"content-type": "image/jpeg"})
-                final_url = supabase.storage.from_("uploads").get_public_url(f"evidence_{fname}")
+                buf = io.BytesIO(); final_img.save(buf, format="JPEG", quality=90)
+                fname = f"ev_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
+                final_url = supabase.storage.from_("uploads").get_public_url(fname)
                 supabase.table("uploaded_images").insert({"file_url": final_url, "filename": fname}).execute()
                 st.success("Saved!"); st.rerun()
 
     with c2:
-        st.subheader("2. Evidence Library")
-        up_cap_style = st.selectbox("Caption Style:", ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"], key="u_cap")
+        st.subheader("2. Library")
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(4).execute().data
         if library:
             for img in library:
@@ -235,9 +261,9 @@ with tab_upload:
                     with col_a:
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                prompt = get_caption_prompt(up_cap_style, "This spooky image", get_brand_knowledge())
-                                response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=300)
-                                supabase.table("social_posts").insert({"caption": response.choices[0].message.content, "image_url": img['file_url'], "topic": "Uploaded Evidence", "status": "draft"}).execute(); st.success("Draft Created!")
+                                prompt = get_caption_prompt("🔥 Viral / Debate (Ask Questions)", "This spooky image", get_brand_knowledge())
+                                response = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=300)
+                                supabase.table("social_posts").insert({"caption": response.choices[0].message.content, "image_url": img['file_url'], "topic": "Evidence", "status": "draft"}).execute(); st.success("Draft Created!")
                         if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
 st.markdown("---")
@@ -254,20 +280,14 @@ with d1:
                 new_cap = st.text_area("Caption", post['caption'], height=150, key=f"cp_{post['id']}")
                 date_in = st.date_input("Date", key=f"dt_{post['id']}")
                 time_in = st.time_input("Time", value=get_best_time_for_day(date_in), key=f"tm_{post['id']}")
-                b1, b2, b3 = st.columns(3)
-                with b1:
-                    if st.button("📅 Schedule", key=f"s_{post['id']}"):
-                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": f"{date_in} {time_in}", "status": "scheduled"}).eq("id", post['id']).execute(); st.rerun()
-                with b2:
-                    if st.button("🚀 POST NOW", key=f"p_{post['id']}", type="primary"):
-                        requests.post(MAKE_WEBHOOK_URL, json={"image_url": post['image_url'], "caption": new_cap})
-                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute(); st.rerun()
-                with b3:
-                    if st.button("🗑️", key=f"del_{post['id']}"): supabase.table("social_posts").delete().eq("id", post['id']).execute(); st.rerun()
+                if st.button("📅 Schedule", key=f"s_{post['id']}"):
+                    supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": f"{date_in} {time_in}", "status": "scheduled"}).eq("id", post['id']).execute(); st.rerun()
+                if st.button("🚀 POST NOW", key=f"p_{post['id']}", type="primary"):
+                    requests.post(MAKE_WEBHOOK_URL, json={"image_url": post['image_url'], "caption": new_cap})
+                    supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute(); st.rerun()
 
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
-    if not sch: st.info("Nothing currently scheduled.")
     for p in sch:
         with st.container(border=True):
             col_img, col_txt = st.columns([1, 3])
@@ -275,12 +295,11 @@ with d2:
             with col_txt:
                 st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
                 st.markdown(f"> {p['caption']}")
-                if st.button("❌ ABORT & MOVE TO DRAFTS", key=f"can_{p['id']}"):
+                if st.button("❌ ABORT", key=f"can_{p['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
 
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
-    if not hist: st.info("No posting history found.")
     for p in hist:
         with st.container(border=True):
             col_img, col_txt = st.columns([1, 3])
