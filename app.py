@@ -6,7 +6,9 @@ import requests
 from datetime import datetime, time
 from bs4 import BeautifulSoup
 import random
-import urllib.parse  # Added for safe link encoding
+import urllib.parse
+from PIL import Image, ImageOps  # Added for Auto-Cropper
+import io  # Added for memory handling
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
@@ -108,32 +110,52 @@ with tab_gen:
                         st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB B: UPLOAD & AUTO-CAPTION (SMART FIX) ---
+# --- TAB B: UPLOAD & AUTO-CAPTION (AUTO-CROPPER ENABLED) ---
 with tab_upload:
     c1, c2 = st.columns([1, 1])
     
     with c1:
         st.subheader("1. Upload Evidence")
+        st.info("ℹ️ System will automatically crop images to a perfect Square (1:1).")
         
         if 'last_upload' not in st.session_state: st.session_state.last_upload = None
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
         if uploaded_file is None: st.session_state.last_upload = None
         
         if uploaded_file is not None and st.session_state.last_upload != uploaded_file.name:
-            with st.spinner("Uploading..."):
+            with st.spinner("Processing & Cropping..."):
                 try:
-                    file_bytes = uploaded_file.getvalue()
-                    file_path = f"evidence_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
+                    # --- IMAGE ENGINE: AUTO-CROP ---
+                    # 1. Open image
+                    image = Image.open(uploaded_file)
                     
-                    # 1. Upload the raw file
-                    supabase.storage.from_("uploads").upload(file_path, file_bytes, {"content-type": uploaded_file.type})
-                    raw_url = supabase.storage.from_("uploads").get_public_url(file_path)
+                    # 2. Fix orientation (if iPhone photo) & Convert to RGB
+                    image = ImageOps.exif_transpose(image)
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
                     
-                    # 2. Save raw link to library
-                    supabase.table("uploaded_images").insert({"file_url": raw_url, "filename": uploaded_file.name}).execute()
+                    # 3. Smart Crop to 1080x1080 Square
+                    # This cuts the top/bottom off tall photos cleanly
+                    image = ImageOps.fit(image, (1080, 1080), method=Image.Resampling.LANCZOS)
+                    
+                    # 4. Save to Memory Buffer (as clean JPG)
+                    buf = io.BytesIO()
+                    image.save(buf, format="JPEG", quality=95)
+                    byte_data = buf.getvalue()
+                    
+                    # 5. Define new filename
+                    safe_filename = f"processed_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                    file_path = f"evidence_{safe_filename}"
+                    
+                    # 6. Upload the PROCESSED data (not the original file)
+                    supabase.storage.from_("uploads").upload(file_path, byte_data, {"content-type": "image/jpeg"})
+                    final_url = supabase.storage.from_("uploads").get_public_url(file_path)
+                    
+                    # 7. Save to library
+                    supabase.table("uploaded_images").insert({"file_url": final_url, "filename": safe_filename}).execute()
                     
                     st.session_state.last_upload = uploaded_file.name
-                    st.success("Uploaded!")
+                    st.success("✅ Image resized & uploaded!")
                     st.rerun()
                 except Exception as e: st.error(f"Upload failed: {e}")
 
@@ -159,12 +181,8 @@ with tab_upload:
                 selected_img = random.choice(images)
                 raw_url = selected_img['file_url']
                 
-                # --- THE SMART FIX ---
-                # We apply the Weserv Magic Link HERE, in Python.
-                # This fixes spaces and aspect ratios before it ever touches Make.com
-                safe_raw_url = urllib.parse.quote(raw_url, safe='') # Encodes spaces and slashes
-                final_instagram_link = f"https://images.weserv.nl/?w=1080&h=1080&fit=cover&output=jpg&url={safe_raw_url}"
-                
+                # --- SIMPLE MODE ---
+                # We send the RAW link directly (because it's now already cropped!)
                 st.image(raw_url, caption="Selected Evidence", width=300)
                 
                 with st.spinner("AI is analyzing..."):
@@ -174,14 +192,14 @@ with tab_upload:
                         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
                         caption = response.choices[0].message.content
                         
-                        # Save the POLISHED link to the Drafts
+                        # Save the RAW link
                         supabase.table("social_posts").insert({
                             "caption": caption, 
-                            "image_url": final_instagram_link, # <--- Saving the cropped, safe link
+                            "image_url": raw_url, 
                             "topic": "Uploaded Evidence Analysis", 
                             "status": "draft"
                         }).execute()
-                        st.success("Draft Created! Check Dashboard.")
+                        st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
 # 4. DASHBOARD
@@ -197,12 +215,9 @@ with dash_t1:
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
             with col1:
-                # Show image (Handle weserv links in preview)
-                show_url = post.get('image_url')
-                if "weserv.nl" in show_url:
-                    st.image(show_url, use_column_width=True)
-                else:
-                    st.image(show_url, use_column_width=True)
+                # Show image
+                if post.get('image_url'):
+                    st.image(post['image_url'], use_column_width=True)
             with col2:
                 new_cap = st.text_area("Caption", post['caption'], height=150, key=f"cap_{post['id']}")
                 d_col, t_col = st.columns(2)
