@@ -14,7 +14,7 @@ from streamlit_cropper import st_cropper
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
 
-# --- CUSTOM CSS (THE "SLICK" LOOK - FIXED VISIBILITY) ---
+# --- CUSTOM CSS (THE "SLICK" LOOK - FIXED SPACING) ---
 st.markdown("""
 <style>
     /* MAIN BACKGROUND: Void Black */
@@ -37,9 +37,11 @@ st.markdown("""
         font-size: 1rem !important;
     }
     
-    /* Small helper text */
-    .stMarkdown p {
-        color: #cccccc;
+    /* FIX: BORDERED BOXES (CONTAINERS) - ADD PADDING GAP */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: 20px !important; /* Adds the breathing room you wanted */
+        background-color: #121212; /* Slightly lighter black for contrast */
+        border-radius: 10px;
     }
 
     /* INPUT FIELDS: Dark Grey with Green Border */
@@ -193,7 +195,7 @@ with tab_gen:
                             st.success("Facts Learned! Review below.")
                             st.rerun()
             
-            # --- PENDING FACTS REVIEW SECTION (NEW!) ---
+            # --- PENDING FACTS REVIEW SECTION ---
             st.divider()
             st.write("🔍 **Pending Approval**")
             pending_facts = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
