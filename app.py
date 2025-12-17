@@ -222,7 +222,7 @@ with tab_gen:
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
                         cap_resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
-                        img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-preview-06-06', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
+                        img_resp = google_client.models.generate_images(model='gemini-3-pro-image-preview', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
                         raw_bytes = img_resp.generated_images[0].image.image_bytes
                         perm_url = save_ai_image_to_storage(raw_bytes)
                         if perm_url:
@@ -308,6 +308,7 @@ with d3:
             with col_txt:
                 st.write(f"✅ **Sent on:** {p['scheduled_time']}")
                 st.markdown(f"**Caption:**\n{p['caption']}")
+
 
 
 
