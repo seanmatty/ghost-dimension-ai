@@ -44,12 +44,21 @@ def get_best_time_for_day(target_date):
 
 def scrape_website(url):
     if not url.startswith("http"): url = "https://" + url
-    headers = {"User-Agent": "Mozilla/5.0"}
+    # Disguise as real browser
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
         page = requests.get(url, headers=headers, timeout=10)
+        if page.status_code != 200: return None
         soup = BeautifulSoup(page.content, "html.parser")
+        
+        # Try paragraphs first
         text = ' '.join([p.text for p in soup.find_all('p')])
-        return text[:6000] if len(text) > 50 else None
+        # If empty, try all text
+        if len(text) < 100: text = soup.get_text(separator=' ', strip=True)
+            
+        return text[:8000] if len(text) > 50 else None
     except: return None
 
 def get_brand_knowledge():
@@ -57,19 +66,16 @@ def get_brand_knowledge():
     if response.data: return "\n".join([f"- {item['fact_summary']}" for item in response.data])
     return "No knowledge yet."
 
-# --- NEW: STRATEGY HELPER ---
 def get_caption_prompt(style, topic_or_desc, context):
     base_prompt = f"Role: Social Media Manager for 'Ghost Dimension'. Context: {context}. Topic: {topic_or_desc}. "
-    
     strategies = {
-        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. The goal is to start a fight in the comments. Ask 'Real or Fake?'. Ask 'What would you do?'. End with a question that forces people to comment.",
-        "🕵️ Investigator (Analyze Detail)": "Write a caption that sounds like a paranormal investigator analyzing evidence. Ask the user to zoom in. Ask 'Do you see what I see?'. Focus on a specific scary detail.",
-        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Do not be generic. Be atmospheric. End on a cliffhanger that gives chills.",
-        "😱 Pure Panic (Short & Scary)": "Write a very short, terrified caption. Use uppercase words for emphasis. Sound like you are currently running away from a ghost. Use emojis like ⚠️👻."
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. The goal is to start a fight in the comments. Ask 'Real or Fake?'. Ask 'What would you do?'. End with a question.",
+        "🕵️ Investigator (Analyze Detail)": "Write a caption that sounds like a paranormal investigator analyzing evidence. Ask the user to zoom in. Focus on details.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Be atmospheric. End on a cliffhanger.",
+        "😱 Pure Panic (Short & Scary)": "Write a very short, terrified caption. Use uppercase words for emphasis. Use emojis like ⚠️👻."
     }
-    
     instruction = strategies.get(style, strategies["🔥 Viral / Debate (Ask Questions)"])
-    return f"{base_prompt} \n\nSTRATEGY: {instruction} \n\nMake it sound human, not AI. No cringe hashtags."
+    return f"{base_prompt} \n\nSTRATEGY: {instruction} \n\nMake it sound human, not AI."
 
 st.title("👻 Ghost Dimension AI Manager")
 
@@ -78,28 +84,55 @@ tab_gen, tab_upload = st.tabs(["✨ Generate from Scratch", "📸 Upload & Auto-
 
 # --- TAB A: GENERATE FROM SCRATCH ---
 with tab_gen:
-    with st.expander("Teach & Generate", expanded=True):
-        col_teach, col_create = st.columns([1, 1])
-        
-        with col_teach:
-            st.subheader("Teach New Knowledge")
-            learn_url = st.text_input("Website URL")
+    col_teach, col_create = st.columns([1, 1])
+    
+    with col_teach:
+        with st.container(border=True):
+            st.subheader("1. Teach New Knowledge")
+            learn_url = st.text_input("Website URL (News article, Wiki, About Us)")
             if st.button("Analyze & Learn"):
-                with st.spinner("Reading..."):
+                with st.spinner("Reading Website..."):
                     raw_text = scrape_website(learn_url)
                     if raw_text:
-                        prompt = f"Extract 3-5 facts about 'Ghost Dimension' from this:\n{raw_text}"
+                        prompt = f"Extract 3-5 facts about 'Ghost Dimension' (or the spooky topic) from this text. Keep them short:\n{raw_text}"
                         resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}])
+                        
+                        count = 0
                         for fact in resp.choices[0].message.content.split('\n'):
                             clean = fact.strip().replace("- ", "")
                             if len(clean) > 10:
                                 supabase.table("brand_knowledge").insert({"source_url": learn_url, "fact_summary": clean, "status": "pending"}).execute()
-                        st.success("Facts learned! Approve below.")
+                                count += 1
+                        
+                        if count > 0: st.success(f"✅ Learned {count} facts! Review them below ↓")
+                        else: st.warning("Found text, but could not extract clear facts.")
                         st.rerun()
-                    else: st.error("Could not read site.")
+                    else: st.error("❌ Could not read site. It might be blocking bots.")
 
-        with col_create:
-            st.subheader("Generate Content")
+        # --- THE MISSING SECTION: APPROVAL QUEUE ---
+        st.write("---")
+        st.subheader("📋 Review Pending Knowledge")
+        pending_facts = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
+        
+        if pending_facts:
+            for fact in pending_facts:
+                with st.expander(f"Pending: {fact['fact_summary'][:50]}...", expanded=True):
+                    st.write(fact['fact_summary'])
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("✅ Approve", key=f"app_{fact['id']}"):
+                            supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
+                            st.rerun()
+                    with b2:
+                        if st.button("🗑️ Delete", key=f"del_fact_{fact['id']}"):
+                            supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute()
+                            st.rerun()
+        else:
+            st.info("No pending facts to review.")
+
+    with col_create:
+        with st.container(border=True):
+            st.subheader("2. Generate Content")
             if st.button("🎲 Suggest Topic"):
                 knowledge = get_brand_knowledge()
                 prompt = f"Context: {knowledge}. Suggest ONE spooky social media topic."
@@ -109,10 +142,9 @@ with tab_gen:
 
             topic = st.text_area("Topic:", value=st.session_state.get('suggested_topic', ''), height=100)
             
-            # --- 1. VISUAL STYLE SELECTOR ---
-            st.write("**1. Visual Style**")
+            # 1. VISUAL STYLE
             style_choice = st.selectbox(
-                "Choose Image Look:",
+                "Visual Style:",
                 [
                     "🟢 CCTV / Night Vision (Classic)",
                     "🎬 Cinematic Horror (Sharp & Realistic)",
@@ -125,10 +157,9 @@ with tab_gen:
                 ]
             )
             
-            # --- 2. CAPTION STYLE SELECTOR ---
-            st.write("**2. Caption Strategy**")
+            # 2. CAPTION STYLE
             caption_style = st.selectbox(
-                "Choose Text Vibe:",
+                "Caption Strategy:",
                 [
                     "🔥 Viral / Debate (Ask Questions)",
                     "🕵️ Investigator (Analyze Detail)",
@@ -151,23 +182,15 @@ with tab_gen:
             if st.button("Generate Post", type="primary"):
                 with st.spinner("Creating magic..."):
                     try:
-                        # 1. Generate Caption with Strategy
                         knowledge = get_brand_knowledge()
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
-                        
                         cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
                         
-                        # 2. Generate Image with Style
                         selected_style_instruction = style_prompts.get(style_choice, style_prompts["🎬 Cinematic Horror (Sharp & Realistic)"])
                         final_img_prompt = f"A scary paranormal image of {topic}. {selected_style_instruction} Make it look authentic and terrifying."
                         
-                        img_resp = client.images.generate(
-                            model="dall-e-3", 
-                            prompt=final_img_prompt, 
-                            size="1024x1024",
-                            quality="hd" # HD improves text rendering
-                        )
+                        img_resp = client.images.generate(model="dall-e-3", prompt=final_img_prompt, size="1024x1024", quality="hd")
                         image_url = img_resp.data[0].url
                         
                         supabase.table("social_posts").insert({"caption": caption, "image_url": image_url, "topic": topic, "status": "draft"}).execute()
@@ -207,22 +230,13 @@ with tab_upload:
 
     with c2:
         st.subheader("2. Library & Generate")
-        
-        # --- NEW: CAPTION STYLE FOR UPLOADS ---
         upload_caption_style = st.selectbox(
-            "Choose Caption Style for these photos:",
-            [
-                "🔥 Viral / Debate (Ask Questions)",
-                "🕵️ Investigator (Analyze Detail)",
-                "📖 Storyteller (Creepypasta)",
-                "😱 Pure Panic (Short & Scary)"
-            ],
+            "Caption Strategy:",
+            ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"],
             key="upload_cap_style"
         )
-        
         st.divider()
         st.write("📂 **Evidence Library (Recent 9)**")
-        
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(9).execute().data
         
         if library:
@@ -231,27 +245,22 @@ with tab_upload:
                 with cols[idx % 2]:
                     with st.container(border=True):
                         st.image(img['file_url'], use_column_width=True)
-                        
                         if st.button("✨ Create Draft", key=f"gen_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
                                 try:
                                     raw_url = img['file_url']
                                     knowledge = get_brand_knowledge()
-                                    
-                                    # Use Strategy Function
                                     final_cap_prompt = get_caption_prompt(upload_caption_style, "This spooky image", knowledge)
                                     final_cap_prompt += " Describe what is in the image specifically."
                                     
                                     response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": final_cap_prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
                                     caption = response.choices[0].message.content
-                                    
                                     supabase.table("social_posts").insert({"caption": caption, "image_url": raw_url, "topic": "Uploaded Evidence", "status": "draft"}).execute()
-                                    st.success("Draft Created! Check Dashboard.")
+                                    st.success("Draft Created!")
                                 except Exception as e: st.error(f"Error: {e}")
 
                         if st.button("🗑️ Delete", key=f"del_{img['id']}"):
-                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
-                            st.rerun()
+                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
         else: st.info("Upload and crop an image on the left to start.")
 
 # 4. DASHBOARD
@@ -275,33 +284,25 @@ with dash_t1:
                 suggested = get_best_time_for_day(d)
                 with t_col: t = st.time_input(f"Time (Rec: {suggested})", value=suggested, key=f"t_{post['id']}")
                 final_time = f"{d} {t}"
-                
                 st.write("---")
                 b1, b2, b3 = st.columns([1, 1, 1])
                 with b1:
                     if st.button("📅 Schedule", key=f"sch_{post['id']}", type="primary"):
-                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": final_time, "status": "scheduled"}).eq("id", post['id']).execute()
-                        st.success("Scheduled!")
-                        st.rerun()
+                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": final_time, "status": "scheduled"}).eq("id", post['id']).execute(); st.success("Scheduled!"); st.rerun()
                 with b2:
                     if st.button("🚀 Post NOW", key=f"now_{post['id']}"):
-                        if not post.get('image_url'):
-                             st.error("❌ Draft has no image!")
+                        if not post.get('image_url'): st.error("❌ Draft has no image!")
                         else:
                             with st.spinner("Posting..."):
-                                payload = {"image_url": post['image_url'], "caption": new_cap}
                                 try:
-                                    r = requests.post(MAKE_WEBHOOK_URL, json=payload)
+                                    r = requests.post(MAKE_WEBHOOK_URL, json={"image_url": post['image_url'], "caption": new_cap})
                                     if r.status_code == 200:
-                                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute()
-                                        st.success("Posted!")
-                                        st.rerun()
+                                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute(); st.success("Posted!"); st.rerun()
                                     else: st.error(f"Make.com Error: {r.text}")
                                 except Exception as e: st.error(f"Connection Failed: {e}")
                 with b3:
                     if st.button("🗑️ Delete", key=f"del_{post['id']}"):
-                        supabase.table("social_posts").delete().eq("id", post['id']).execute()
-                        st.rerun()
+                        supabase.table("social_posts").delete().eq("id", post['id']).execute(); st.rerun()
 
 with dash_t2:
     scheduled = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
@@ -314,8 +315,7 @@ with dash_t2:
                 st.subheader(f"Due: {post['scheduled_time']} UTC")
                 st.text(post['caption'][:100] + "...")
                 if st.button("❌ Cancel", key=f"cancel_{post['id']}"):
-                    supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute()
-                    st.rerun()
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute(); st.rerun()
 
 with dash_t3:
     history = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(20).execute().data
