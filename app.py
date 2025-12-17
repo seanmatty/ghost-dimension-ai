@@ -16,7 +16,7 @@ from streamlit_cropper import st_cropper
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (Updated for visibility) ---
 st.markdown("""
 <style>
     .stApp { background-color: #050505; color: #e0e0e0; }
@@ -25,10 +25,12 @@ st.markdown("""
         font-family: 'Helvetica Neue', sans-serif;
         text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
     }
+    /* Labels and Headers */
     label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label {
         color: #ffffff !important;
         font-weight: 600 !important;
     }
+    /* Containers */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         padding: 25px !important; 
         background-color: #121212;
@@ -36,18 +38,32 @@ st.markdown("""
         margin-bottom: 20px;
         border: 1px solid #333; 
     }
+    /* Input Fields */
     .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
-        background-color: #1c1c1c; color: white; border: 1px solid #333; border-radius: 8px;
+        background-color: #1c1c1c !important; color: white !important; border: 1px solid #333 !important; border-radius: 8px;
     }
+    /* Standard Buttons (Fixing the Grey-on-White issue) */
     .stButton > button {
-        background-color: transparent; color: #00ff41; border: 1px solid #00ff41; border-radius: 8px; transition: all 0.3s ease;
+        background-color: #1c1c1c !important; 
+        color: #00ff41 !important; 
+        border: 1px solid #00ff41 !important; 
+        border-radius: 8px; 
+        transition: all 0.3s ease;
+        font-weight: 500;
     }
     .stButton > button:hover {
-        background-color: #00ff41; color: black; box-shadow: 0 0 15px rgba(0, 255, 65, 0.7);
+        background-color: #00ff41 !important; 
+        color: #000000 !important; 
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.7);
     }
+    /* Primary Buttons (Post Now / Save) */
     button[kind="primary"] {
-        background-color: #00ff41 !important; color: black !important; border: none; font-weight: bold;
+        background-color: #00ff41 !important; 
+        color: black !important; 
+        border: none !important; 
+        font-weight: bold !important;
     }
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { background-color: #1c1c1c; border-radius: 5px; color: #888; }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
@@ -111,15 +127,14 @@ def save_ai_image_to_storage(image_bytes):
         return None
 
 def enhance_topic(topic, style):
-    """Uses GPT-4o-mini to turn a simple topic into a technical photography prompt."""
     prompt = f"""Rewrite this into a technical prompt for a high-end image generator (Imagen 3).
     Topic: {topic}
     Style: {style}
     Instructions:
     - Describe the camera gear (CCTV, 35mm, Daguerreotype).
-    - Add paranormal details (shadow person, translucent figure, light orbs).
-    - Add technical artifacts (noise, grain, motion blur, lens flare).
-    - Maintain a realistic 'Evidence' feel. No CGI or digital art.
+    - Add paranormal details (shadow person, translucent figure).
+    - Add technical artifacts (noise, grain, motion blur).
+    - Maintain a realistic 'Evidence' feel.
     - Max 50 words."""
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
@@ -186,17 +201,14 @@ with tab_gen:
 
         with c_body:
             st.subheader("Nano Banana Realism")
-            
-            # --- THE ENHANCER UI ---
             if "enhanced_topic" not in st.session_state: st.session_state.enhanced_topic = ""
-            
-            topic = st.text_area("Subject:", value=st.session_state.enhanced_topic if st.session_state.enhanced_topic else "", placeholder="e.g. A shadow figure at the end of a long hospital corridor...", height=100)
+            topic = st.text_area("Subject:", value=st.session_state.enhanced_topic if st.session_state.enhanced_topic else "", placeholder="e.g. A shadow figure...", height=100)
             
             c1, c2 = st.columns(2)
             with c1:
                 style_choice = st.selectbox("Visual Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
             with c2:
-                if st.button("🪄 ENHANCE DETAILS", help="Uses AI to add technical photography details to your prompt"):
+                if st.button("🪄 ENHANCE DETAILS"):
                     with st.spinner("Refining..."):
                         st.session_state.enhanced_topic = enhance_topic(topic, style_choice)
                         st.rerun()
@@ -206,26 +218,16 @@ with tab_gen:
             if st.button("🚀 GENERATE WITH NANO", type="primary"):
                 with st.spinner("Invoking Imagen 3..."):
                     try:
-                        # 1. Caption
                         knowledge = get_brand_knowledge()
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
                         cap_resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
-                        
-                        # 2. Nano Banana Image
-                        img_resp = google_client.models.generate_images(
-                            model='imagen-3.0-generate-002',
-                            prompt=topic, # We use the enhanced prompt directly
-                            config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT")
-                        )
-                        
-                        # 3. Secure and Save
+                        img_resp = google_client.models.generate_images(model='imagen-3.0-generate-002', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
                         raw_bytes = img_resp.generated_images[0].image.image_bytes
                         perm_url = save_ai_image_to_storage(raw_bytes)
-                        
                         if perm_url:
                             supabase.table("social_posts").insert({"caption": caption, "image_url": perm_url, "topic": topic, "status": "draft"}).execute()
-                            st.session_state.enhanced_topic = "" # Reset for next post
+                            st.session_state.enhanced_topic = ""
                             st.success("Draft Created!"); st.rerun()
                     except Exception as e: st.error(e)
 
@@ -238,7 +240,6 @@ with tab_upload:
             image = ImageOps.exif_transpose(Image.open(f))
             max_size = 1200
             if max(image.size) > max_size: image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-            
             cropped_img = st_cropper(image, aspect_ratio=(1, 1), box_color='#00ff41', should_resize_image=True)
             if st.button("✅ SAVE TO VAULT", type="primary"):
                 if cropped_img.mode != "RGB": cropped_img = cropped_img.convert("RGB")
