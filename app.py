@@ -48,37 +48,72 @@ with st.expander("Create New Content"):
 # 3. REVIEW DASHBOARD
 st.header("Weekly Review Queue")
 
+# Helper function to handle refreshing the page
+def reload_page():
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
 # Fetch drafts from database
 try:
     response = supabase.table("social_posts").select("*").eq("status", "draft").execute()
     posts = response.data
 
     if not posts:
-        st.info("No drafts waiting. Go generate some above!")
+        st.success("🎉 All caught up! No drafts waiting.")
+        st.info("Go to the 'Create New Content' section above to generate more.")
 
     for post in posts:
-        st.divider() # Adds a nice line between posts
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.image(post['image_url'], width=300)
-        with col2:
-            new_cap = st.text_area("Caption", post['caption'], key=post['id'])
-            if st.button("Approve & Post Now", key=f"btn_{post['id']}"):
-                # D. Send to Social Media (Ayrshare)
-                payload = {
-                    'post': new_cap, 
-                    'platforms': ['instagram', 'facebook'], 
-                    'mediaUrls': [post['image_url']]
-                }
-                headers = {'Authorization': f'Bearer {AYRSHARE_KEY}'}
-                r = requests.post('https://app.ayrshare.com/api/post', json=payload, headers=headers)
-                
-                if r.status_code == 200:
-                    st.success("Posted to Instagram & Facebook!")
-                    # Mark as posted so it vanishes from the list
-                    supabase.table("social_posts").update({"status": "posted"}).eq("id", post['id']).execute()
-                    st.rerun() # Refreshes the page
+        # We create a placeholder. This lets us wipe just this post from the screen later.
+        post_container = st.empty()
+        
+        with post_container.container():
+            st.divider()
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                if post.get('image_url'):
+                    st.image(post['image_url'], width=300)
                 else:
-                    st.error(f"Error posting: {r.text}")
+                    st.warning("No image generated")
+                
+            with col2:
+                new_cap = st.text_area("Caption", post['caption'], key=f"cap_{post['id']}")
+                
+                # Scheduling Inputs
+                st.write("📅 **Schedule:**")
+                d = st.date_input("Date", key=f"d_{post['id']}")
+                t = st.time_input("Time (UTC)", key=f"t_{post['id']}")
+                iso_date = f"{d}T{t}Z"
+                
+                if st.button("Approve & Schedule", key=f"btn_{post['id']}"):
+                    with st.spinner("Talking to Ayrshare..."):
+                        # 1. Prepare Payload
+                        payload = {
+                            'post': new_cap, 
+                            'platforms': ['instagram', 'facebook'], 
+                            'mediaUrls': [post['image_url']],
+                            'scheduleDate': iso_date
+                        }
+                        headers = {'Authorization': f'Bearer {AYRSHARE_KEY}'}
+                        
+                        # 2. Send to API
+                        r = requests.post('https://app.ayrshare.com/api/post', json=payload, headers=headers)
+                        
+                        if r.status_code == 200:
+                            # 3. Success! Update Database
+                            supabase.table("social_posts").update({"status": "scheduled"}).eq("id", post['id']).execute()
+                            
+                            # 4. VISUAL CLEANUP
+                            st.success("✅ Scheduled successfully!")
+                            post_container.empty() # <--- This instantly hides the post UI
+                            
+                            # 5. Reload the whole page to be sure
+                            reload_page()
+                            
+                        else:
+                            st.error(f"❌ Error from Ayrshare: {r.text}")
+
 except Exception as e:
-    st.error(f"Database error: {e}")
+    st.error(f"System Error: {e}")
