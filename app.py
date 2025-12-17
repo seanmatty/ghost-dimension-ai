@@ -16,7 +16,7 @@ from streamlit_cropper import st_cropper
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
 
-# --- UPDATED CUSTOM CSS (Expander Fixes) ---
+# --- UPDATED CUSTOM CSS (Stronger Expander Fixes) ---
 st.markdown("""
 <style>
     .stApp { background-color: #050505; color: #e0e0e0; }
@@ -29,18 +29,19 @@ st.markdown("""
         color: #ffffff !important;
         font-weight: 600 !important;
     }
-    /* Expanders (Maintenance Section Fix) */
+    
+    /* SYSTEM MAINTENANCE HEADER FIX */
     .stExpander {
         background-color: #121212 !important;
         border: 1px solid #333 !important;
         border-radius: 12px !important;
     }
-    .stExpander [data-testid="stExpanderHeader"] {
+    .stExpander [data-testid="stExpanderHeader"], 
+    .stExpander [data-testid="stExpanderHeader"] p,
+    .stExpander [data-testid="stExpanderHeader"] span {
         color: #00ff41 !important;
         background-color: #121212 !important;
-    }
-    .stExpander [data-testid="stExpanderHeader"]:hover {
-        color: #ffffff !important;
+        font-weight: bold !important;
     }
     
     /* Input Boxes */
@@ -140,13 +141,13 @@ def get_caption_prompt(style, topic_or_desc, context):
     }
     return f"{base_prompt} \n\nSTRATEGY: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
 
-# --- MAIN TITLE & COUNTER ---
+# --- MAIN TITLE & COUNTER (Updated Label) ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA</span></h1>", unsafe_allow_html=True)
-st.markdown(f"<p style='text-align: center; color: #888;'>Captured Evidence: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
-# 3. TAB AREA
-tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 EVIDENCE VAULT"])
+# 3. TAB AREA (Updated Labels)
+tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE"])
 
 with tab_gen:
     with st.container(border=True):
@@ -248,7 +249,18 @@ with d1:
                     requests.post(MAKE_WEBHOOK_URL, json={"image_url": post['image_url'], "caption": new_cap})
                     supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute(); st.rerun()
 
-# --- HISTORY TAB ---
+with d2:
+    sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
+    for p in sch:
+        with st.container(border=True):
+            col_img, col_txt = st.columns([1, 3])
+            with col_img: st.image(p['image_url'], use_column_width=True)
+            with col_txt:
+                st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
+                st.markdown(f"> {p['caption']}")
+                if st.button("❌ ABORT", key=f"can_{p['id']}"):
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
+
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
     for p in hist:
@@ -257,12 +269,12 @@ with d3:
             with ci: st.image(p['image_url'], use_column_width=True)
             with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
 
-# --- FIXED MAINTENANCE SECTION ---
+# --- UPDATED: SYSTEM MAINTENANCE SECTION ---
 st.markdown("---")
 with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
     st.warning("Archive Policy: Delete 'posted' content older than 60 days to save space.")
     
-    # 1. Check for old evidence
+    # Check for old evidence
     sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
     old_data = supabase.table("social_posts").select("id, image_url").eq("status", "posted").lt("created_at", sixty_days_ago).execute().data
     
@@ -271,8 +283,6 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
         st.write(f"📂 **Overdue for Purge:** {len(old_data)} files")
     
     with c_act:
-        # TEST BUTTON: Always appears so you can see the color.
-        # INCINERATE BUTTON: Only works if there is actual old data.
         if len(old_data) > 0:
             if st.button("🔥 INCINERATE OLD EVIDENCE", help="Permanently delete from vault."):
                 filenames = [url['image_url'].split('/')[-1] for url in old_data]
