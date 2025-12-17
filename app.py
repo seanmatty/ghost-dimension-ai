@@ -63,7 +63,6 @@ with tab_gen:
     with st.expander("Teach & Generate", expanded=True):
         col_teach, col_create = st.columns([1, 1])
         
-        # Teach AI
         with col_teach:
             st.subheader("Teach New Knowledge")
             learn_url = st.text_input("Website URL")
@@ -81,7 +80,6 @@ with tab_gen:
                         st.rerun()
                     else: st.error("Could not read site.")
 
-        # Generate Content
         with col_create:
             st.subheader("Generate Content")
             if st.button("🎲 Suggest Topic"):
@@ -97,20 +95,16 @@ with tab_gen:
                 with st.spinner("Creating magic..."):
                     try:
                         knowledge = get_brand_knowledge()
-                        # Caption
                         p_cap = f"Role: Social Manager for Ghost Dimension. Context: {knowledge}. Write scary caption about: {topic}."
                         cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": p_cap}])
                         caption = cap_resp.choices[0].message.content
-                        
-                        # Image
                         img_resp = client.images.generate(model="dall-e-3", prompt=f"Paranormal photo of {topic}. Night vision green tint, grainy CCTV style.", size="1024x1024")
                         image_url = img_resp.data[0].url
-                        
                         supabase.table("social_posts").insert({"caption": caption, "image_url": image_url, "topic": topic, "status": "draft"}).execute()
                         st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB B: UPLOAD & AUTO-CAPTION (NEW!) ---
+# --- TAB B: UPLOAD & AUTO-CAPTION (UPDATED) ---
 with tab_upload:
     c1, c2 = st.columns([1, 1])
     
@@ -118,41 +112,48 @@ with tab_upload:
         st.subheader("1. Upload Evidence")
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
         if uploaded_file is not None:
-            # Upload to Supabase Storage
             try:
                 file_bytes = uploaded_file.getvalue()
+                # Create unique filename
                 file_path = f"evidence_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
-                
-                # Upload
                 supabase.storage.from_("uploads").upload(file_path, file_bytes, {"content-type": uploaded_file.type})
-                
-                # Get Public URL
                 public_url = supabase.storage.from_("uploads").get_public_url(file_path)
-                
-                # Save to DB
                 supabase.table("uploaded_images").insert({"file_url": public_url, "filename": uploaded_file.name}).execute()
-                st.success("Uploaded successfully!")
+                st.success("Uploaded!")
+                st.rerun() # Refresh to show thumbnail immediately
             except Exception as e:
-                st.error(f"Upload failed (File might already exist): {e}")
+                st.error(f"Upload failed: {e}")
+
+        # --- NEW: THUMBNAIL GALLERY ---
+        st.divider()
+        st.write("📂 **Evidence Library** (Click 🗑️ to delete)")
+        library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
+        
+        if library:
+            # Create a Grid
+            cols = st.columns(3)
+            for idx, img in enumerate(library):
+                with cols[idx % 3]:
+                    st.image(img['file_url'], use_column_width=True)
+                    if st.button("🗑️", key=f"del_img_{img['id']}"):
+                        supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
+                        st.rerun()
+        else:
+            st.info("No images in library.")
 
     with c2:
-        st.subheader("2. Auto-Generate from Uploads")
+        st.subheader("2. Auto-Generate from Library")
         st.write("Click below to pick a random evidence photo and have AI write about it.")
         
         if st.button("🎲 Random Photo + AI Caption", type="primary"):
-            # 1. Get all images
             images = supabase.table("uploaded_images").select("*").execute().data
             if not images:
                 st.warning("No images uploaded yet!")
             else:
-                # 2. Pick Random
                 selected_img = random.choice(images)
                 img_url = selected_img['file_url']
-                
-                # 3. Show it
                 st.image(img_url, caption="Selected Evidence", width=300)
                 
-                # 4. Use GPT-4 Vision to SEE the image
                 with st.spinner("AI is analyzing the photo..."):
                     try:
                         knowledge = get_brand_knowledge()
@@ -162,31 +163,27 @@ with tab_upload:
                         Connect it to our brand knowledge: {knowledge}.
                         Write an engaging Instagram caption with hashtags.
                         """
-                        
                         response = client.chat.completions.create(
-                            model="gpt-4o", # GPT-4o has Vision capabilities
+                            model="gpt-4o", 
                             messages=[
                                 {
-                                    "role": "user",
+                                    "role": "user", 
                                     "content": [
                                         {"type": "text", "text": prompt},
                                         {"type": "image_url", "image_url": {"url": img_url}}
-                                    ],
+                                    ]
                                 }
                             ],
                             max_tokens=300,
                         )
                         caption = response.choices[0].message.content
-                        
-                        # 5. Save as Draft
                         supabase.table("social_posts").insert({
                             "caption": caption, 
                             "image_url": img_url, 
                             "topic": "Uploaded Evidence Analysis", 
                             "status": "draft"
                         }).execute()
-                        st.success("Draft Created from Upload! Check Dashboard below.")
-                        
+                        st.success("Draft Created! Check Dashboard.")
                     except Exception as e:
                         st.error(f"AI Vision Error: {e}")
 
@@ -195,7 +192,7 @@ st.divider()
 st.header("📲 Content Dashboard")
 dash_t1, dash_t2, dash_t3 = st.tabs(["📝 Drafts", "📅 Scheduled", "📜 History"])
 
-# --- DASHBOARD LOGIC (Same as before) ---
+# --- DASHBOARD LOGIC ---
 with dash_t1:
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").execute().data
     if not drafts: st.info("No drafts pending.")
