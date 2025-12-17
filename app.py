@@ -1,17 +1,47 @@
 import streamlit as st
+import hmac
 from openai import OpenAI
 from supabase import create_client
 import requests
 
-# 1. SETUP: Connect to all your accounts
+# 1. PAGE CONFIG (Must be the first Streamlit command)
+st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
+
+# --- SECURITY GATE ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if hmac.compare_digest(st.session_state["password"], st.secrets["ADMIN_PASSWORD"]):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show input for password
+    st.text_input(
+        "Password", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state:
+        st.error("😕 Password incorrect")
+    return False
+
+if not check_password():
+    st.stop()  # STOP HERE if password is wrong
+# ---------------------
+
+# 2. SETUP: Connect to all your accounts
 client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 AYRSHARE_KEY = st.secrets["AYRSHARE_KEY"]
 
-st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
 st.title("👻 Ghost Dimension AI Manager")
 
-# 2. GENERATE NEW POSTS
+# 3. GENERATE NEW POSTS
 with st.expander("Create New Content", expanded=True):
     topic = st.text_input("What is the topic? (e.g. 'Haunted Asylum Episode')")
     if st.button("Generate Magic", type="primary"):
@@ -42,7 +72,7 @@ with st.expander("Create New Content", expanded=True):
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
-# 3. DASHBOARD WITH TABS
+# 4. DASHBOARD WITH TABS
 st.header("Content Dashboard")
 
 tab1, tab2 = st.tabs(["📝 Drafts (Needs Review)", "📅 Scheduled (Waiting)"])
