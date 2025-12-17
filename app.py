@@ -7,8 +7,10 @@ from datetime import datetime, time
 from bs4 import BeautifulSoup
 import random
 import urllib.parse
-from PIL import Image, ImageOps  # Added for Auto-Cropper
-import io  # Added for memory handling
+from PIL import Image, ImageOps
+import io
+# NEW: Import the cropping tool
+from streamlit_cropper import st_cropper 
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
@@ -110,97 +112,106 @@ with tab_gen:
                         st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB B: UPLOAD & AUTO-CAPTION (AUTO-CROPPER ENABLED) ---
+# --- TAB B: UPLOAD & MANUAL CROP ---
 with tab_upload:
     c1, c2 = st.columns([1, 1])
     
     with c1:
-        st.subheader("1. Upload Evidence")
-        st.info("ℹ️ System will automatically crop images to a perfect Square (1:1).")
+        st.subheader("1. Upload & Crop")
         
-        if 'last_upload' not in st.session_state: st.session_state.last_upload = None
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
-        if uploaded_file is None: st.session_state.last_upload = None
         
-        if uploaded_file is not None and st.session_state.last_upload != uploaded_file.name:
-            with st.spinner("Processing & Cropping..."):
-                try:
-                    # --- IMAGE ENGINE: AUTO-CROP ---
-                    # 1. Open image
-                    image = Image.open(uploaded_file)
-                    
-                    # 2. Fix orientation (if iPhone photo) & Convert to RGB
-                    image = ImageOps.exif_transpose(image)
-                    if image.mode != "RGB":
-                        image = image.convert("RGB")
-                    
-                    # 3. Smart Crop to 1080x1080 Square
-                    # This cuts the top/bottom off tall photos cleanly
-                    image = ImageOps.fit(image, (1080, 1080), method=Image.Resampling.LANCZOS)
-                    
-                    # 4. Save to Memory Buffer (as clean JPG)
-                    buf = io.BytesIO()
-                    image.save(buf, format="JPEG", quality=95)
-                    byte_data = buf.getvalue()
-                    
-                    # 5. Define new filename
-                    safe_filename = f"processed_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                    file_path = f"evidence_{safe_filename}"
-                    
-                    # 6. Upload the PROCESSED data (not the original file)
-                    supabase.storage.from_("uploads").upload(file_path, byte_data, {"content-type": "image/jpeg"})
-                    final_url = supabase.storage.from_("uploads").get_public_url(file_path)
-                    
-                    # 7. Save to library
-                    supabase.table("uploaded_images").insert({"file_url": final_url, "filename": safe_filename}).execute()
-                    
-                    st.session_state.last_upload = uploaded_file.name
-                    st.success("✅ Image resized & uploaded!")
-                    st.rerun()
-                except Exception as e: st.error(f"Upload failed: {e}")
+        if uploaded_file:
+            # Load the user's image
+            image = Image.open(uploaded_file)
+            image = ImageOps.exif_transpose(image) # Fix orientation
+            
+            st.write("👇 **Drag the box to select your square area:**")
+            
+            # --- THE CROPPER WIDGET ---
+            # This shows the interactive box
+            cropped_img = st_cropper(
+                image,
+                aspect_ratio=(1, 1),    # Forces a Square
+                box_color='#FF0000',    # Red Box
+                should_resize_image=True # Optimizes for web
+            )
+            
+            st.write("Preview:")
+            # Show a tiny preview of what they cut out
+            st.image(cropped_img, width=150)
+            
+            if st.button("✅ Confirm & Save to Library", type="primary"):
+                with st.spinner("Saving perfect crop..."):
+                    try:
+                        # 1. Convert the CROPPED image to bytes
+                        if cropped_img.mode != "RGB":
+                            cropped_img = cropped_img.convert("RGB")
+                        
+                        # Resize to standard 1080x1080 for high quality
+                        final_img = cropped_img.resize((1080, 1080))
+                        
+                        buf = io.BytesIO()
+                        final_img.save(buf, format="JPEG", quality=95)
+                        byte_data = buf.getvalue()
+                        
+                        # 2. Upload to Supabase
+                        filename = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                        supabase.storage.from_("uploads").upload(f"evidence_{filename}", byte_data, {"content-type": "image/jpeg"})
+                        final_url = supabase.storage.from_("uploads").get_public_url(f"evidence_{filename}")
+                        
+                        # 3. Save to DB
+                        supabase.table("uploaded_images").insert({"file_url": final_url, "filename": filename}).execute()
+                        
+                        st.success("Saved to Library! -> Check the right side.")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
 
-        st.divider()
-        st.write("📂 **Evidence Library**")
-        library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
+    with c2:
+        st.subheader("2. Library & Generate")
+        st.write("📂 **Ready for AI Analysis**")
+        
+        library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(9).execute().data
+        
         if library:
+            # Display grid of uploaded images
             cols = st.columns(3)
             for idx, img in enumerate(library):
                 with cols[idx % 3]:
                     st.image(img['file_url'], use_column_width=True)
-                    if st.button("🗑️", key=f"del_img_{img['id']}"):
+                    if st.button("🗑️", key=f"del_{img['id']}"):
                         supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
                         st.rerun()
-        else: st.info("No images uploaded.")
 
-    with c2:
-        st.subheader("2. Auto-Generate from Library")
-        if st.button("🎲 Random Photo + AI Caption", type="primary"):
-            images = supabase.table("uploaded_images").select("*").execute().data
-            if not images: st.warning("No images uploaded yet!")
-            else:
-                selected_img = random.choice(images)
-                raw_url = selected_img['file_url']
-                
-                # --- SIMPLE MODE ---
-                # We send the RAW link directly (because it's now already cropped!)
-                st.image(raw_url, caption="Selected Evidence", width=300)
-                
-                with st.spinner("AI is analyzing..."):
-                    try:
-                        knowledge = get_brand_knowledge()
-                        prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
-                        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
-                        caption = response.choices[0].message.content
-                        
-                        # Save the RAW link
-                        supabase.table("social_posts").insert({
-                            "caption": caption, 
-                            "image_url": raw_url, 
-                            "topic": "Uploaded Evidence Analysis", 
-                            "status": "draft"
-                        }).execute()
-                        st.success("Draft Created!")
-                    except Exception as e: st.error(f"Error: {e}")
+            st.divider()
+            if st.button("🎲 Random Photo + AI Caption", type="primary"):
+                if not library: st.warning("No images!")
+                else:
+                    selected_img = random.choice(library)
+                    raw_url = selected_img['file_url']
+                    
+                    st.image(raw_url, caption="Selected Evidence", width=300)
+                    
+                    with st.spinner("AI is analyzing..."):
+                        try:
+                            knowledge = get_brand_knowledge()
+                            prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
+                            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
+                            caption = response.choices[0].message.content
+                            
+                            # Save Draft
+                            supabase.table("social_posts").insert({
+                                "caption": caption, 
+                                "image_url": raw_url, 
+                                "topic": "Uploaded Evidence Analysis", 
+                                "status": "draft"
+                            }).execute()
+                            st.success("Draft Created! Check Dashboard.")
+                        except Exception as e: st.error(f"Error: {e}")
+        else:
+            st.info("Upload and crop an image on the left to start.")
 
 # 4. DASHBOARD
 st.divider()
