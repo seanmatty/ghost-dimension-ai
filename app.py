@@ -35,6 +35,22 @@ client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 AYRSHARE_KEY = st.secrets["AYRSHARE_KEY"]
 
+# --- TEMPORARY FIX ---
+st.divider()
+st.subheader("🔧 Repair Tools")
+webhook_url = st.text_input("Paste your Make.com Webhook URL here:")
+
+if st.button("🔥 FORCE FIRE TEST SIGNAL"):
+    if webhook_url:
+        payload = {
+            "image_url": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Everest_North_Face_toward_Base_Camp_Tibet_Luca_Galuzzi_2006.jpg",
+            "caption": "This is a test from Ghost Dimension AI!"
+        }
+        requests.post(webhook_url, json=payload)
+        st.success("Signal sent! Go check Make.com now!")
+    else:
+        st.error("https://hook.eu1.make.com/cvuatijp1zs1g8w6hrheudl3saaxmnj3")
+
 # --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
     day_name = target_date.strftime("%A")
@@ -267,3 +283,4 @@ with tab2:
                 if st.button("❌ Cancel", key=f"cancel_{post['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute()
                     st.rerun()
+
