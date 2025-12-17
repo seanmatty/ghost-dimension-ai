@@ -4,7 +4,7 @@ from openai import OpenAI
 from supabase import create_client
 import requests
 from datetime import datetime, time
-from bs4 import BeautifulSoup # Tool to read websites
+from bs4 import BeautifulSoup
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
@@ -44,21 +44,35 @@ def get_best_time_for_day(target_date):
     return time(20, 0)
 
 def scrape_website(url):
-    """Downloads text from a website link."""
+    """Downloads text from a website link with smart error handling."""
+    # 1. Auto-fix URL if missing https://
+    if not url.startswith("http"):
+        url = "https://" + url
+        
+    # 2. Use a 'Fake ID' (User-Agent) so the site thinks we are a human on Chrome
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     try:
-        page = requests.get(url, timeout=10)
+        page = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(page.content, "html.parser")
-        # Get all text paragraphs
+        
+        # Get all text paragraphs and clean them up
         text = ' '.join([p.text for p in soup.find_all('p')])
-        return text[:4000] # Limit to 4000 characters so we don't overwhelm AI
+        
+        if len(text) < 50:
+            return "Could not find much text. Maybe try a specific blog post or episode page?"
+            
+        return text[:4000] # Limit to 4000 characters
     except Exception as e:
+        print(f"Scrape Error: {e}")
         return None
 
 def get_brand_knowledge():
     """Fetches all APPROVED facts about your business."""
     response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
     if response.data:
-        # Combine all facts into one big string
         return "\n".join([f"- {item['fact_summary']}" for item in response.data])
     return "No knowledge yet. The show is about paranormal investigations."
 
@@ -72,29 +86,35 @@ col_teach, col_create = st.columns([1, 1])
 # --- LEFT COLUMN: TEACH THE AI ---
 with col_teach:
     st.subheader("Teach New Knowledge")
-    with st.expander("Add a Website Link", expanded=False):
-        learn_url = st.text_input("Website URL (e.g. your blog post or episode page)")
+    with st.expander("Add a Website Link", expanded=True):
+        st.info("Paste a link to an About page, Blog post, or Episode description.")
+        learn_url = st.text_input("Website URL")
+        
         if st.button("Analyze & Learn"):
-            with st.spinner("Reading website..."):
-                raw_text = scrape_website(learn_url)
-                if raw_text:
-                    # Ask AI to summarize what it learned
-                    prompt = f"Read this website text and summarize the key 'Ghost Dimension' brand facts in 1 sentence: {raw_text}"
-                    summary_resp = client.chat.completions.create(
-                        model="gpt-4", messages=[{"role": "user", "content": prompt}]
-                    )
-                    fact = summary_resp.choices[0].message.content
+            if not learn_url:
+                st.error("Please paste a URL first.")
+            else:
+                with st.spinner("Reading website..."):
+                    raw_text = scrape_website(learn_url)
                     
-                    # Save as Pending
-                    supabase.table("brand_knowledge").insert({
-                        "source_url": learn_url,
-                        "fact_summary": fact,
-                        "status": "pending"
-                    }).execute()
-                    st.success("Learned! Please approve it below.")
-                    st.rerun()
-                else:
-                    st.error("Could not read that website. Is it valid?")
+                    if raw_text and len(raw_text) > 50:
+                        # Ask AI to summarize what it learned
+                        prompt = f"Read this website text and summarize the key 'Ghost Dimension' brand facts in 1 sentence: {raw_text}"
+                        summary_resp = client.chat.completions.create(
+                            model="gpt-4", messages=[{"role": "user", "content": prompt}]
+                        )
+                        fact = summary_resp.choices[0].message.content
+                        
+                        # Save as Pending
+                        supabase.table("brand_knowledge").insert({
+                            "source_url": learn_url,
+                            "fact_summary": fact,
+                            "status": "pending"
+                        }).execute()
+                        st.success("Learned! Please approve it below.")
+                        st.rerun()
+                    else:
+                        st.error("Could not read that website. It might be empty or blocking bots.")
 
     # Show Pending Knowledge for Approval
     pending_knowledge = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
@@ -104,12 +124,14 @@ with col_teach:
             with st.container(border=True):
                 st.info(f"AI Learned: {fact['fact_summary']}")
                 c1, c2 = st.columns(2)
-                if c1.button("✅ Approve Fact", key=f"app_{fact['id']}"):
-                    supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
-                    st.rerun()
-                if c2.button("🗑️ Reject", key=f"rej_{fact['id']}"):
-                    supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute()
-                    st.rerun()
+                with c1:
+                    if st.button("✅ Approve Fact", key=f"app_{fact['id']}"):
+                        supabase.table("brand_knowledge").update({"status": "approved"}).eq("id", fact['id']).execute()
+                        st.rerun()
+                with c2:
+                    if st.button("🗑️ Reject", key=f"rej_{fact['id']}"):
+                        supabase.table("brand_knowledge").delete().eq("id", fact['id']).execute()
+                        st.rerun()
 
 # --- RIGHT COLUMN: CREATE CONTENT ---
 with col_create:
@@ -123,18 +145,16 @@ with col_create:
             suggestion_resp = client.chat.completions.create(
                 model="gpt-4", messages=[{"role": "user", "content": prompt}]
             )
-            # We put the suggestion into the session state so it fills the text box
             st.session_state['suggested_topic'] = suggestion_resp.choices[0].message.content
             st.rerun()
 
-    # The Topic Input (Pre-filled if they clicked Suggest)
+    # The Topic Input
     default_topic = st.session_state.get('suggested_topic', '')
     topic = st.text_area("Topic to write about:", value=default_topic, height=100)
     
     if st.button("Generate Post", type="primary"):
         with st.spinner("AI is writing and painting..."):
             try:
-                # 1. Fetch Brand Knowledge to make the post smarter
                 knowledge_context = get_brand_knowledge()
                 
                 # A. Write Caption
@@ -194,7 +214,6 @@ with tab1:
                 with d_col:
                     d = st.date_input("Date", key=f"d_{post['id']}")
                 
-                # AI Time Suggestion
                 suggested_time = get_best_time_for_day(d)
                 with t_col:
                     t = st.time_input(f"Time (Best: {suggested_time})", value=suggested_time, key=f"t_{post['id']}")
