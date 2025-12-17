@@ -57,6 +57,20 @@ def get_brand_knowledge():
     if response.data: return "\n".join([f"- {item['fact_summary']}" for item in response.data])
     return "No knowledge yet."
 
+# --- NEW: STRATEGY HELPER ---
+def get_caption_prompt(style, topic_or_desc, context):
+    base_prompt = f"Role: Social Media Manager for 'Ghost Dimension'. Context: {context}. Topic: {topic_or_desc}. "
+    
+    strategies = {
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, punchy caption. The goal is to start a fight in the comments. Ask 'Real or Fake?'. Ask 'What would you do?'. End with a question that forces people to comment.",
+        "🕵️ Investigator (Analyze Detail)": "Write a caption that sounds like a paranormal investigator analyzing evidence. Ask the user to zoom in. Ask 'Do you see what I see?'. Focus on a specific scary detail.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence mini horror story. Do not be generic. Be atmospheric. End on a cliffhanger that gives chills.",
+        "😱 Pure Panic (Short & Scary)": "Write a very short, terrified caption. Use uppercase words for emphasis. Sound like you are currently running away from a ghost. Use emojis like ⚠️👻."
+    }
+    
+    instruction = strategies.get(style, strategies["🔥 Viral / Debate (Ask Questions)"])
+    return f"{base_prompt} \n\nSTRATEGY: {instruction} \n\nMake it sound human, not AI. No cringe hashtags."
+
 st.title("👻 Ghost Dimension AI Manager")
 
 # 3. CONTENT CREATION AREA
@@ -95,16 +109,65 @@ with tab_gen:
 
             topic = st.text_area("Topic:", value=st.session_state.get('suggested_topic', ''), height=100)
             
+            # --- 1. VISUAL STYLE SELECTOR ---
+            st.write("**1. Visual Style**")
+            style_choice = st.selectbox(
+                "Choose Image Look:",
+                [
+                    "🟢 CCTV / Night Vision (Classic)",
+                    "🎬 Cinematic Horror (Sharp & Realistic)",
+                    "📸 Vintage Photograph (Sepia/Damaged)",
+                    "🎨 Digital Concept Art (Clean Text)",
+                    "🎄 Christmas / Yule Horror",
+                    "🎃 Halloween / Samhain",
+                    "❄️ Deep Winter",
+                    "☀️ Midsummer Nightmare"
+                ]
+            )
+            
+            # --- 2. CAPTION STYLE SELECTOR ---
+            st.write("**2. Caption Strategy**")
+            caption_style = st.selectbox(
+                "Choose Text Vibe:",
+                [
+                    "🔥 Viral / Debate (Ask Questions)",
+                    "🕵️ Investigator (Analyze Detail)",
+                    "📖 Storyteller (Creepypasta)",
+                    "😱 Pure Panic (Short & Scary)"
+                ]
+            )
+            
+            style_prompts = {
+                "🟢 CCTV / Night Vision (Classic)": "Night vision green tint, grainy CCTV security camera footage style, low resolution feel.",
+                "🎬 Cinematic Horror (Sharp & Realistic)": "High budget horror movie screenshot, cinematic lighting, 4k resolution, sharp focus, hyperrealistic.",
+                "📸 Vintage Photograph (Sepia/Damaged)": "Authentic 1920s spirit photography, sepia tone, dust and scratches, victorian gothic atmosphere.",
+                "🎨 Digital Concept Art (Clean Text)": "High quality digital horror concept art, clean lines, atmospheric fog, sharp details, artstation style.",
+                "🎄 Christmas / Yule Horror": "Christmas horror style, twisted holiday decorations, falling snow, Krampus atmosphere, cold blue and red lighting.",
+                "🎃 Halloween / Samhain": "Classic Halloween horror style, autumn leaves, pumpkin orange palette, thick fog, jack-o-lantern atmosphere.",
+                "❄️ Deep Winter": "Frozen winter horror, ice and frost, breath visible, desaturated blue tones, bleak atmosphere.",
+                "☀️ Midsummer Nightmare": "Folk horror style, bright daylight but scary, heat haze, dried grass, Midsommar movie vibes."
+            }
+            
             if st.button("Generate Post", type="primary"):
                 with st.spinner("Creating magic..."):
                     try:
+                        # 1. Generate Caption with Strategy
                         knowledge = get_brand_knowledge()
-                        p_cap = f"Role: Social Manager for Ghost Dimension. Context: {knowledge}. Write scary caption about: {topic}."
-                        cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": p_cap}])
+                        final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
+                        
+                        cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
                         
-                        # AI Images are always square, so we use them RAW
-                        img_resp = client.images.generate(model="dall-e-3", prompt=f"Paranormal photo of {topic}. Night vision green tint, grainy CCTV style.", size="1024x1024")
+                        # 2. Generate Image with Style
+                        selected_style_instruction = style_prompts.get(style_choice, style_prompts["🎬 Cinematic Horror (Sharp & Realistic)"])
+                        final_img_prompt = f"A scary paranormal image of {topic}. {selected_style_instruction} Make it look authentic and terrifying."
+                        
+                        img_resp = client.images.generate(
+                            model="dall-e-3", 
+                            prompt=final_img_prompt, 
+                            size="1024x1024",
+                            quality="hd" # HD improves text rendering
+                        )
                         image_url = img_resp.data[0].url
                         
                         supabase.table("social_posts").insert({"caption": caption, "image_url": image_url, "topic": topic, "status": "draft"}).execute()
@@ -117,91 +180,79 @@ with tab_upload:
     
     with c1:
         st.subheader("1. Upload & Crop")
-        
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
         
         if uploaded_file:
-            # Load the user's image
             image = Image.open(uploaded_file)
-            image = ImageOps.exif_transpose(image) # Fix orientation
-            
+            image = ImageOps.exif_transpose(image)
             st.write("👇 **Drag the box to select your square area:**")
-            
-            # --- THE CROPPER WIDGET ---
-            cropped_img = st_cropper(
-                image,
-                aspect_ratio=(1, 1),    # Forces a Square
-                box_color='#FF0000',    # Red Box
-                should_resize_image=True
-            )
-            
+            cropped_img = st_cropper(image, aspect_ratio=(1, 1), box_color='#FF0000', should_resize_image=True)
             st.write("Preview:")
             st.image(cropped_img, width=150)
             
             if st.button("✅ Confirm & Save to Library", type="primary"):
-                with st.spinner("Saving perfect crop..."):
+                with st.spinner("Saving..."):
                     try:
-                        if cropped_img.mode != "RGB":
-                            cropped_img = cropped_img.convert("RGB")
-                        
+                        if cropped_img.mode != "RGB": cropped_img = cropped_img.convert("RGB")
                         final_img = cropped_img.resize((1080, 1080))
-                        
                         buf = io.BytesIO()
                         final_img.save(buf, format="JPEG", quality=95)
                         byte_data = buf.getvalue()
-                        
                         filename = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                         supabase.storage.from_("uploads").upload(f"evidence_{filename}", byte_data, {"content-type": "image/jpeg"})
                         final_url = supabase.storage.from_("uploads").get_public_url(f"evidence_{filename}")
-                        
                         supabase.table("uploaded_images").insert({"file_url": final_url, "filename": filename}).execute()
-                        
-                        st.success("Saved to Library! -> Check the right side.")
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Save failed: {e}")
+                        st.success("Saved!"); st.rerun()
+                    except Exception as e: st.error(f"Save failed: {e}")
 
     with c2:
         st.subheader("2. Library & Generate")
+        
+        # --- NEW: CAPTION STYLE FOR UPLOADS ---
+        upload_caption_style = st.selectbox(
+            "Choose Caption Style for these photos:",
+            [
+                "🔥 Viral / Debate (Ask Questions)",
+                "🕵️ Investigator (Analyze Detail)",
+                "📖 Storyteller (Creepypasta)",
+                "😱 Pure Panic (Short & Scary)"
+            ],
+            key="upload_cap_style"
+        )
+        
+        st.divider()
         st.write("📂 **Evidence Library (Recent 9)**")
         
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(9).execute().data
         
         if library:
-            # Display grid of uploaded images WITH BUTTONS
-            cols = st.columns(2) # 2 columns is wider/cleaner
+            cols = st.columns(2)
             for idx, img in enumerate(library):
                 with cols[idx % 2]:
                     with st.container(border=True):
                         st.image(img['file_url'], use_column_width=True)
                         
-                        # BUTTON 1: CREATE DRAFT (Specific to this image)
                         if st.button("✨ Create Draft", key=f"gen_{img['id']}", type="primary"):
-                            with st.spinner("AI is analyzing this photo..."):
+                            with st.spinner("Analyzing..."):
                                 try:
                                     raw_url = img['file_url']
                                     knowledge = get_brand_knowledge()
-                                    prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
-                                    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
+                                    
+                                    # Use Strategy Function
+                                    final_cap_prompt = get_caption_prompt(upload_caption_style, "This spooky image", knowledge)
+                                    final_cap_prompt += " Describe what is in the image specifically."
+                                    
+                                    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": final_cap_prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
                                     caption = response.choices[0].message.content
                                     
-                                    supabase.table("social_posts").insert({
-                                        "caption": caption, 
-                                        "image_url": raw_url, 
-                                        "topic": "Uploaded Evidence Analysis", 
-                                        "status": "draft"
-                                    }).execute()
+                                    supabase.table("social_posts").insert({"caption": caption, "image_url": raw_url, "topic": "Uploaded Evidence", "status": "draft"}).execute()
                                     st.success("Draft Created! Check Dashboard.")
                                 except Exception as e: st.error(f"Error: {e}")
 
-                        # BUTTON 2: DELETE
                         if st.button("🗑️ Delete", key=f"del_{img['id']}"):
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
                             st.rerun()
-
-        else:
-            st.info("Upload and crop an image on the left to start.")
+        else: st.info("Upload and crop an image on the left to start.")
 
 # 4. DASHBOARD
 st.divider()
