@@ -152,7 +152,15 @@ def get_caption_prompt(style, topic_or_desc, context):
 
 # --- MAIN TITLE ---
 st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA ENGINE</span></h1>", unsafe_allow_html=True)
-
+# --- GHOST SCANNER: FIND YOUR HIDDEN MODEL ID ---
+try:
+    available_models = google_client.models.list()
+    st.sidebar.write("📡 Your Key's Available Models:")
+    for m in available_models:
+        if "image" in m.name or "imagen" in m.name:
+            st.sidebar.code(m.name.replace("models/", "")) # Copy this exact text
+except Exception as e:
+    st.sidebar.error(f"Scanner Failed: {e}")
 # 3. CONTENT CREATION AREA
 tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 EVIDENCE VAULT"])
 
@@ -308,6 +316,7 @@ with d3:
             with col_txt:
                 st.write(f"✅ **Sent on:** {p['scheduled_time']}")
                 st.markdown(f"**Caption:**\n{p['caption']}")
+
 
 
 
