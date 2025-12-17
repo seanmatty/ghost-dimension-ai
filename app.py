@@ -6,6 +6,7 @@ import requests
 from datetime import datetime, time
 from bs4 import BeautifulSoup
 import random
+import urllib.parse  # Added for safe link encoding
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Ghost Dimension AI", layout="wide")
@@ -98,59 +99,47 @@ with tab_gen:
                         p_cap = f"Role: Social Manager for Ghost Dimension. Context: {knowledge}. Write scary caption about: {topic}."
                         cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": p_cap}])
                         caption = cap_resp.choices[0].message.content
+                        
+                        # AI Images are always square, so we use them RAW
                         img_resp = client.images.generate(model="dall-e-3", prompt=f"Paranormal photo of {topic}. Night vision green tint, grainy CCTV style.", size="1024x1024")
                         image_url = img_resp.data[0].url
+                        
                         supabase.table("social_posts").insert({"caption": caption, "image_url": image_url, "topic": topic, "status": "draft"}).execute()
                         st.success("Draft Created!")
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB B: UPLOAD & AUTO-CAPTION (FIXED!) ---
+# --- TAB B: UPLOAD & AUTO-CAPTION (SMART FIX) ---
 with tab_upload:
     c1, c2 = st.columns([1, 1])
     
     with c1:
         st.subheader("1. Upload Evidence")
         
-        # --- THE FIX: MEMORY CHECK ---
-        if 'last_upload' not in st.session_state:
-            st.session_state.last_upload = None
-            
+        if 'last_upload' not in st.session_state: st.session_state.last_upload = None
         uploaded_file = st.file_uploader("Choose a photo...", type=['jpg', 'png', 'jpeg'])
+        if uploaded_file is None: st.session_state.last_upload = None
         
-        # Reset memory if user clears the box
-        if uploaded_file is None:
-            st.session_state.last_upload = None
-            
-        # Only run upload IF file exists AND it's different from the last one
         if uploaded_file is not None and st.session_state.last_upload != uploaded_file.name:
-            with st.spinner("Uploading to secure vault..."):
+            with st.spinner("Uploading..."):
                 try:
                     file_bytes = uploaded_file.getvalue()
-                    # Create unique filename
                     file_path = f"evidence_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
                     
-                    # Upload
+                    # 1. Upload the raw file
                     supabase.storage.from_("uploads").upload(file_path, file_bytes, {"content-type": uploaded_file.type})
+                    raw_url = supabase.storage.from_("uploads").get_public_url(file_path)
                     
-                    # Get Public URL
-                    public_url = supabase.storage.from_("uploads").get_public_url(file_path)
+                    # 2. Save raw link to library
+                    supabase.table("uploaded_images").insert({"file_url": raw_url, "filename": uploaded_file.name}).execute()
                     
-                    # Save to DB
-                    supabase.table("uploaded_images").insert({"file_url": public_url, "filename": uploaded_file.name}).execute()
-                    
-                    # MARK AS DONE TO STOP LOOP
                     st.session_state.last_upload = uploaded_file.name
-                    
                     st.success("Uploaded!")
-                    st.rerun() # Force instant refresh
-                except Exception as e:
-                    st.error(f"Upload failed: {e}")
+                    st.rerun()
+                except Exception as e: st.error(f"Upload failed: {e}")
 
-        # --- THUMBNAIL GALLERY ---
         st.divider()
-        st.write("📂 **Evidence Library** (Click 🗑️ to delete)")
+        st.write("📂 **Evidence Library**")
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
-        
         if library:
             cols = st.columns(3)
             for idx, img in enumerate(library):
@@ -159,54 +148,41 @@ with tab_upload:
                     if st.button("🗑️", key=f"del_img_{img['id']}"):
                         supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
                         st.rerun()
-        else:
-            st.info("No images in library.")
+        else: st.info("No images uploaded.")
 
     with c2:
         st.subheader("2. Auto-Generate from Library")
-        st.write("Click below to pick a random evidence photo and have AI write about it.")
-        
         if st.button("🎲 Random Photo + AI Caption", type="primary"):
             images = supabase.table("uploaded_images").select("*").execute().data
-            if not images:
-                st.warning("No images uploaded yet!")
+            if not images: st.warning("No images uploaded yet!")
             else:
                 selected_img = random.choice(images)
-                img_url = selected_img['file_url']
-                st.image(img_url, caption="Selected Evidence", width=300)
+                raw_url = selected_img['file_url']
                 
-                with st.spinner("AI is analyzing the photo..."):
+                # --- THE SMART FIX ---
+                # We apply the Weserv Magic Link HERE, in Python.
+                # This fixes spaces and aspect ratios before it ever touches Make.com
+                safe_raw_url = urllib.parse.quote(raw_url, safe='') # Encodes spaces and slashes
+                final_instagram_link = f"https://images.weserv.nl/?w=1080&h=1080&fit=cover&output=jpg&url={safe_raw_url}"
+                
+                st.image(raw_url, caption="Selected Evidence", width=300)
+                
+                with st.spinner("AI is analyzing..."):
                     try:
                         knowledge = get_brand_knowledge()
-                        prompt = f"""
-                        You are the Ghost Dimension social manager.
-                        Look at this image. Describe what you see in a spooky, investigative tone.
-                        Connect it to our brand knowledge: {knowledge}.
-                        Write an engaging Instagram caption with hashtags.
-                        """
-                        response = client.chat.completions.create(
-                            model="gpt-4o", 
-                            messages=[
-                                {
-                                    "role": "user", 
-                                    "content": [
-                                        {"type": "text", "text": prompt},
-                                        {"type": "image_url", "image_url": {"url": img_url}}
-                                    ]
-                                }
-                            ],
-                            max_tokens=300,
-                        )
+                        prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
+                        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
                         caption = response.choices[0].message.content
+                        
+                        # Save the POLISHED link to the Drafts
                         supabase.table("social_posts").insert({
                             "caption": caption, 
-                            "image_url": img_url, 
+                            "image_url": final_instagram_link, # <--- Saving the cropped, safe link
                             "topic": "Uploaded Evidence Analysis", 
                             "status": "draft"
                         }).execute()
                         st.success("Draft Created! Check Dashboard.")
-                    except Exception as e:
-                        st.error(f"AI Vision Error: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
 
 # 4. DASHBOARD
 st.divider()
@@ -221,7 +197,12 @@ with dash_t1:
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
             with col1:
-                if post.get('image_url'): st.image(post['image_url'], use_column_width=True)
+                # Show image (Handle weserv links in preview)
+                show_url = post.get('image_url')
+                if "weserv.nl" in show_url:
+                    st.image(show_url, use_column_width=True)
+                else:
+                    st.image(show_url, use_column_width=True)
             with col2:
                 new_cap = st.text_area("Caption", post['caption'], height=150, key=f"cap_{post['id']}")
                 d_col, t_col = st.columns(2)
@@ -239,12 +220,20 @@ with dash_t1:
                         st.rerun()
                 with b2:
                     if st.button("🚀 Post NOW", key=f"now_{post['id']}"):
-                        with st.spinner("Posting..."):
-                            payload = {"image_url": post['image_url'], "caption": new_cap}
-                            requests.post(MAKE_WEBHOOK_URL, json=payload)
-                            supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute()
-                            st.success("Posted!")
-                            st.rerun()
+                        # Safety Check
+                        if not post.get('image_url'):
+                             st.error("❌ Draft has no image!")
+                        else:
+                            with st.spinner("Posting..."):
+                                payload = {"image_url": post['image_url'], "caption": new_cap}
+                                try:
+                                    r = requests.post(MAKE_WEBHOOK_URL, json=payload)
+                                    if r.status_code == 200:
+                                        supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute()
+                                        st.success("Posted!")
+                                        st.rerun()
+                                    else: st.error(f"Make.com Error: {r.text}")
+                                except Exception as e: st.error(f"Connection Failed: {e}")
                 with b3:
                     if st.button("🗑️ Delete", key=f"del_{post['id']}"):
                         supabase.table("social_posts").delete().eq("id", post['id']).execute()
@@ -274,20 +263,3 @@ with dash_t3:
             with c2:
                 st.write(f"**Posted on:** {post['scheduled_time']}")
                 with st.expander("View Caption"): st.write(post['caption'])
-# --- SYSTEM TESTER ---
-st.divider()
-st.subheader("🔧 Connection Diagnosis")
-if st.button("🔥 SEND TEST IMAGE (Wikipedia Cat)"):
-    test_image = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1024px-Cat03.jpg"
-    test_caption = "System Test: If you see this cat, the connection is working!"
-    
-    with st.spinner("Sending test signal..."):
-        try:
-            r = requests.post(MAKE_WEBHOOK_URL, json={"image_url": test_image, "caption": test_caption})
-            if r.status_code == 200:
-                st.success("✅ Signal sent! Check Instagram. If the cat appears, your Make.com connection is PERFECT.")
-                st.info("If the cat works but your own photos fail, the issue is your Supabase 'Public' switch.")
-            else:
-                st.error(f"Make.com rejected the signal: {r.text}")
-        except Exception as e:
-            st.error(f"Could not connect: {e}")
