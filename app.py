@@ -9,7 +9,6 @@ import random
 import urllib.parse
 from PIL import Image, ImageOps
 import io
-# NEW: Import the cropping tool
 from streamlit_cropper import st_cropper 
 
 # 1. PAGE CONFIG
@@ -129,38 +128,32 @@ with tab_upload:
             st.write("👇 **Drag the box to select your square area:**")
             
             # --- THE CROPPER WIDGET ---
-            # This shows the interactive box
             cropped_img = st_cropper(
                 image,
                 aspect_ratio=(1, 1),    # Forces a Square
                 box_color='#FF0000',    # Red Box
-                should_resize_image=True # Optimizes for web
+                should_resize_image=True
             )
             
             st.write("Preview:")
-            # Show a tiny preview of what they cut out
             st.image(cropped_img, width=150)
             
             if st.button("✅ Confirm & Save to Library", type="primary"):
                 with st.spinner("Saving perfect crop..."):
                     try:
-                        # 1. Convert the CROPPED image to bytes
                         if cropped_img.mode != "RGB":
                             cropped_img = cropped_img.convert("RGB")
                         
-                        # Resize to standard 1080x1080 for high quality
                         final_img = cropped_img.resize((1080, 1080))
                         
                         buf = io.BytesIO()
                         final_img.save(buf, format="JPEG", quality=95)
                         byte_data = buf.getvalue()
                         
-                        # 2. Upload to Supabase
                         filename = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                         supabase.storage.from_("uploads").upload(f"evidence_{filename}", byte_data, {"content-type": "image/jpeg"})
                         final_url = supabase.storage.from_("uploads").get_public_url(f"evidence_{filename}")
                         
-                        # 3. Save to DB
                         supabase.table("uploaded_images").insert({"file_url": final_url, "filename": filename}).execute()
                         
                         st.success("Saved to Library! -> Check the right side.")
@@ -171,45 +164,42 @@ with tab_upload:
 
     with c2:
         st.subheader("2. Library & Generate")
-        st.write("📂 **Ready for AI Analysis**")
+        st.write("📂 **Evidence Library (Recent 9)**")
         
         library = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(9).execute().data
         
         if library:
-            # Display grid of uploaded images
-            cols = st.columns(3)
+            # Display grid of uploaded images WITH BUTTONS
+            cols = st.columns(2) # 2 columns is wider/cleaner
             for idx, img in enumerate(library):
-                with cols[idx % 3]:
-                    st.image(img['file_url'], use_column_width=True)
-                    if st.button("🗑️", key=f"del_{img['id']}"):
-                        supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
-                        st.rerun()
+                with cols[idx % 2]:
+                    with st.container(border=True):
+                        st.image(img['file_url'], use_column_width=True)
+                        
+                        # BUTTON 1: CREATE DRAFT (Specific to this image)
+                        if st.button("✨ Create Draft", key=f"gen_{img['id']}", type="primary"):
+                            with st.spinner("AI is analyzing this photo..."):
+                                try:
+                                    raw_url = img['file_url']
+                                    knowledge = get_brand_knowledge()
+                                    prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
+                                    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
+                                    caption = response.choices[0].message.content
+                                    
+                                    supabase.table("social_posts").insert({
+                                        "caption": caption, 
+                                        "image_url": raw_url, 
+                                        "topic": "Uploaded Evidence Analysis", 
+                                        "status": "draft"
+                                    }).execute()
+                                    st.success("Draft Created! Check Dashboard.")
+                                except Exception as e: st.error(f"Error: {e}")
 
-            st.divider()
-            if st.button("🎲 Random Photo + AI Caption", type="primary"):
-                if not library: st.warning("No images!")
-                else:
-                    selected_img = random.choice(library)
-                    raw_url = selected_img['file_url']
-                    
-                    st.image(raw_url, caption="Selected Evidence", width=300)
-                    
-                    with st.spinner("AI is analyzing..."):
-                        try:
-                            knowledge = get_brand_knowledge()
-                            prompt = f"Role: Ghost Dimension social manager. Describe this spooky image. Context: {knowledge}. Write caption."
-                            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": raw_url}}]}], max_tokens=300)
-                            caption = response.choices[0].message.content
-                            
-                            # Save Draft
-                            supabase.table("social_posts").insert({
-                                "caption": caption, 
-                                "image_url": raw_url, 
-                                "topic": "Uploaded Evidence Analysis", 
-                                "status": "draft"
-                            }).execute()
-                            st.success("Draft Created! Check Dashboard.")
-                        except Exception as e: st.error(f"Error: {e}")
+                        # BUTTON 2: DELETE
+                        if st.button("🗑️ Delete", key=f"del_{img['id']}"):
+                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute()
+                            st.rerun()
+
         else:
             st.info("Upload and crop an image on the left to start.")
 
@@ -226,9 +216,7 @@ with dash_t1:
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
             with col1:
-                # Show image
-                if post.get('image_url'):
-                    st.image(post['image_url'], use_column_width=True)
+                if post.get('image_url'): st.image(post['image_url'], use_column_width=True)
             with col2:
                 new_cap = st.text_area("Caption", post['caption'], height=150, key=f"cap_{post['id']}")
                 d_col, t_col = st.columns(2)
@@ -246,7 +234,6 @@ with dash_t1:
                         st.rerun()
                 with b2:
                     if st.button("🚀 Post NOW", key=f"now_{post['id']}"):
-                        # Safety Check
                         if not post.get('image_url'):
                              st.error("❌ Draft has no image!")
                         else:
