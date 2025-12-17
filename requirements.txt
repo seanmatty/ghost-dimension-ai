@@ -3,3 +3,4 @@ openai
 supabase
 requests
 pandas
+beautifulsoup4
