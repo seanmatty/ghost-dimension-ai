@@ -98,6 +98,20 @@ def get_brand_knowledge():
     if response.data: return "\n".join([f"- {item['fact_summary']}" for item in response.data])
     return "No knowledge yet."
 
+def save_ai_image_to_storage(image_url):
+    """Downloads DALL-E image and re-uploads it to Supabase for permanent storage."""
+    try:
+        response = requests.get(image_url)
+        if response.status_code == 200:
+            file_bits = response.content
+            filename = f"ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            # Upload to the 'uploads' bucket
+            supabase.storage.from_("uploads").upload(filename, file_bits, {"content-type": "image/png"})
+            return supabase.storage.from_("uploads").get_public_url(filename)
+    except Exception as e:
+        st.error(f"Failed to secure AI image: {e}")
+    return image_url # Fallback to temp URL if storage fails
+
 def get_caption_prompt(style, topic_or_desc, context):
     base_prompt = f"Role: Social Media Manager for 'Ghost Dimension'. Context: {context}. Topic: {topic_or_desc}. "
     strategies = {
@@ -184,9 +198,16 @@ with tab_gen:
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
                         cap_resp = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
+                        
+                        # Generate Image
                         img_resp = client.images.generate(model="dall-e-3", prompt=f"{topic}. {style_prompts[style_choice]}", size="1024x1024", quality="hd")
-                        supabase.table("social_posts").insert({"caption": caption, "image_url": img_resp.data[0].url, "topic": topic, "status": "draft"}).execute()
-                        st.success("Draft Created!"); st.rerun()
+                        temp_url = img_resp.data[0].url
+                        
+                        # SECURE IMAGE PERMANENTLY
+                        permanent_url = save_ai_image_to_storage(temp_url)
+                        
+                        supabase.table("social_posts").insert({"caption": caption, "image_url": permanent_url, "topic": topic, "status": "draft"}).execute()
+                        st.success("Draft Created & Image Secured!"); st.rerun()
                     except Exception as e: st.error(e)
 
 with tab_upload:
@@ -244,7 +265,9 @@ with d1:
                         supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": f"{date_in} {time_in}", "status": "scheduled"}).eq("id", post['id']).execute(); st.rerun()
                 with b2:
                     if st.button("🚀 POST NOW", key=f"p_{post['id']}", type="primary"):
+                        # Send to Webhook
                         requests.post(MAKE_WEBHOOK_URL, json={"image_url": post['image_url'], "caption": new_cap})
+                        # Update DB
                         supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", post['id']).execute(); st.rerun()
                 with b3:
                     if st.button("🗑️", key=f"del_{post['id']}"): supabase.table("social_posts").delete().eq("id", post['id']).execute(); st.rerun()
@@ -255,11 +278,10 @@ with d2:
     for p in sch:
         with st.container(border=True):
             col_img, col_txt = st.columns([1, 3])
-            with col_img:
-                st.image(p['image_url'], use_column_width=True)
+            with col_img: st.image(p['image_url'], use_column_width=True)
             with col_txt:
                 st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
-                st.markdown(f"> {p['caption']}") # Displays the caption in a ghosty quote block
+                st.markdown(f"> {p['caption']}")
                 if st.button("❌ ABORT & MOVE TO DRAFTS", key=f"can_{p['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
 
@@ -269,8 +291,7 @@ with d3:
     for p in hist:
         with st.container(border=True):
             col_img, col_txt = st.columns([1, 3])
-            with col_img:
-                st.image(p['image_url'], use_column_width=True)
+            with col_img: st.image(p['image_url'], use_column_width=True)
             with col_txt:
                 st.write(f"✅ **Sent on:** {p['scheduled_time']}")
                 st.markdown(f"**Caption:**\n{p['caption']}")
