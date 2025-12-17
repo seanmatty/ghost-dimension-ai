@@ -152,15 +152,7 @@ def get_caption_prompt(style, topic_or_desc, context):
 
 # --- MAIN TITLE ---
 st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>NANO BANANA ENGINE</span></h1>", unsafe_allow_html=True)
-# --- GHOST SCANNER: FIND YOUR HIDDEN MODEL ID ---
-try:
-    available_models = google_client.models.list()
-    st.sidebar.write("📡 Your Key's Available Models:")
-    for m in available_models:
-        if "image" in m.name or "imagen" in m.name:
-            st.sidebar.code(m.name.replace("models/", "")) # Copy this exact text
-except Exception as e:
-    st.sidebar.error(f"Scanner Failed: {e}")
+
 # 3. CONTENT CREATION AREA
 tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 EVIDENCE VAULT"])
 
@@ -230,7 +222,7 @@ with tab_gen:
                         final_cap_prompt = get_caption_prompt(caption_style, topic, knowledge)
                         cap_resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": final_cap_prompt}])
                         caption = cap_resp.choices[0].message.content
-                        img_resp = google_client.models.generate_images(model='gemini-3-pro-preview', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
+                        img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
                         raw_bytes = img_resp.generated_images[0].image.image_bytes
                         perm_url = save_ai_image_to_storage(raw_bytes)
                         if perm_url:
@@ -316,6 +308,7 @@ with d3:
             with col_txt:
                 st.write(f"✅ **Sent on:** {p['scheduled_time']}")
                 st.markdown(f"**Caption:**\n{p['caption']}")
+
 
 
 
