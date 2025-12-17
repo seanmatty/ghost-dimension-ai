@@ -4,3 +4,4 @@ supabase
 requests
 pandas
 beautifulsoup4
+Pillow
