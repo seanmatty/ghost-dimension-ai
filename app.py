@@ -274,3 +274,20 @@ with dash_t3:
             with c2:
                 st.write(f"**Posted on:** {post['scheduled_time']}")
                 with st.expander("View Caption"): st.write(post['caption'])
+# --- SYSTEM TESTER ---
+st.divider()
+st.subheader("🔧 Connection Diagnosis")
+if st.button("🔥 SEND TEST IMAGE (Wikipedia Cat)"):
+    test_image = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1024px-Cat03.jpg"
+    test_caption = "System Test: If you see this cat, the connection is working!"
+    
+    with st.spinner("Sending test signal..."):
+        try:
+            r = requests.post(MAKE_WEBHOOK_URL, json={"image_url": test_image, "caption": test_caption})
+            if r.status_code == 200:
+                st.success("✅ Signal sent! Check Instagram. If the cat appears, your Make.com connection is PERFECT.")
+                st.info("If the cat works but your own photos fail, the issue is your Supabase 'Public' switch.")
+            else:
+                st.error(f"Make.com rejected the signal: {r.text}")
+        except Exception as e:
+            st.error(f"Could not connect: {e}")
