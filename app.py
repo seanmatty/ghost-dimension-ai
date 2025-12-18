@@ -96,7 +96,7 @@ supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
 # --- GLOBAL OPTIONS ---
-STRATEGY_OPTIONS = ["🎲 AI Choice (Spooky Random)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
+STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
 # --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
@@ -138,13 +138,13 @@ def enhance_topic(topic, style):
 
 def get_caption_prompt(style, topic, context):
     strategies = {
-        "🎲 AI Choice (Spooky Random)": "Create an immersive investigator caption. Focus on the atmospheric lighting and shadows. Do not explicitly identify people, focus on the 'presence' in the scene.",
-        "🔥 Viral / Debate (Ask Questions)": "Punchy caption. Ask 'Real or Fake?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on a detail in the background. Ask them to zoom in.",
-        "📖 Storyteller (Creepypasta)": "3-sentence mini horror story.",
-        "😱 Pure Panic (Short & Scary)": "Short, terrified. Use ⚠️👻."
+        "🎲 AI Choice (Promotional)": "Act as the Official Voice of Ghost Dimension. Link this scene to the show and tell people to head to our channel for the full investigation.",
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, debating caption. Ask 'Real or Fake?'. Tag @GhostDimension.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a background anomaly. Tell them to watch the latest Ghost Dimension episode to see how we track this energy.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story that sounds like a Ghost Dimension teaser.",
+        "😱 Pure Panic (Short & Scary)": "Short, terrifying caption. 'We weren't alone in this episode...' Use ⚠️👻."
     }
-    return f"Role: Ghost Dimension Social Manager. Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
+    return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
@@ -204,7 +204,7 @@ with tab_gen:
                     st.session_state.enhanced_topic = generate_random_ghost_topic(); st.rerun()
             with c_enh:
                 if st.button("🪄 ENHANCE DETAILS"):
-                    st.session_state.enhanced_topic = enhance_topic(topic, "CCTV Investigation Photo"); st.rerun()
+                    st.session_state.enhanced_topic = enhance_topic(topic, "Official Ghost Dimension Capture"); st.rerun()
 
             c1, c2 = st.columns(2)
             with c1: style_choice = st.selectbox("Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
@@ -213,7 +213,7 @@ with tab_gen:
             cap_style = st.selectbox("Strategy", STRATEGY_OPTIONS)
 
             if st.button("🚀 GENERATE DRAFTS", type="primary"):
-                with st.spinner(f"Summoning {post_count} ghosts..."):
+                with st.spinner(f"Manufacturing Ghost Dimension Content..."):
                     try:
                         for i in range(post_count):
                             iter_topic = topic if (topic and post_count == 1) else generate_random_ghost_topic()
@@ -249,26 +249,27 @@ with tab_upload:
                     with col_i: st.image(img['file_url'], use_column_width=True)
                     with col_a:
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("Analyzing Evidence..."):
-                                # --- UPDATED SAFE VISION PROMPT ---
-                                vision_prompt = f"""You are a Paranormal Content Creator for 'Ghost Dimension'.
-                                FACTUAL CONTEXT: {get_brand_knowledge()}
-                                STRATEGY: {u_strategy}
+                            with st.spinner("Preparing Brand Teaser..."):
+                                # --- UPDATED BRANDED PROMPT ---
+                                vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
+                                BRAND FACTS: {get_brand_knowledge()}
                                 
                                 TASK:
-                                1. Describe the spooky atmosphere of this photo (lighting, shadows, setting).
-                                2. Create a compelling investigation story that links this scene to the BRAND FACTS provided.
-                                3. Write a high-engagement social media caption.
-                                4. Focus on 'unexplained energy' and 'historic hauntings' rather than identifying individuals.
-                                5. End with a question to start a debate."""
+                                1. Write a social media caption for this photo.
+                                2. DO NOT use technical headers or descriptions.
+                                3. Hook the audience with a spooky observation in the photo.
+                                4. Pivot immediately to promoting our show 'Ghost Dimension'.
+                                5. Mention specific episodes or the history from our BRAND FACTS to prove our expertise.
+                                6. Tell people to watch the show for the full investigation.
+                                7. Strategy to use: {u_strategy}."""
                                 
                                 resp = openai_client.chat.completions.create(
                                     model="gpt-4o", 
                                     messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
                                     max_tokens=400
                                 )
-                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute()
-                                st.success("Draft created!"); st.rerun()
+                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Promotional Upload", "status": "draft"}).execute()
+                                st.success("Branded Draft Created!"); st.rerun()
                         if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
 # --- COMMAND CENTER ---
