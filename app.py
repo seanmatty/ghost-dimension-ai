@@ -95,6 +95,10 @@ google_client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
+# --- GLOBAL OPTIONS ---
+STYLE_OPTIONS = ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"]
+STRATEGY_OPTIONS = ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
+
 # --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
     day_name = target_date.strftime("%A")
@@ -113,15 +117,27 @@ def scrape_website(url):
 
 def get_brand_knowledge():
     response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
-    return "\n".join([f"- {i['fact_summary']}" for i in response.data]) if response.data else "No knowledge yet."
+    return "\n".join([f"- {i['fact_summary']}" for i in response.data]) if response.data else ""
 
 def save_ai_image_to_storage(image_bytes):
     try:
-        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        # Added %f (microseconds) to filename to prevent collisions in bulk generation
+        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
         supabase.storage.from_("uploads").upload(filename, image_bytes, {"content-type": "image/png"})
         return supabase.storage.from_("uploads").get_public_url(filename)
     except Exception as e:
         st.error(f"Save failed: {e}"); return None
+
+def generate_random_ghost_topic():
+    """AI Randomizer: Uses Brand Knowledge + Engagement logic to brainstorm a topic."""
+    knowledge = get_brand_knowledge()
+    prompt = f"""Role: Social Media Producer for 'Ghost Dimension'.
+    Context: {knowledge if knowledge else 'British paranormal investigations'}.
+    Task: Brainstorm ONE unique, terrifying paranormal scene for a photography prompt. 
+    Focus on visual engagement (shadows, figures, orbs). 
+    Max 20 words."""
+    resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
+    return resp.choices[0].message.content
 
 def enhance_topic(topic, style):
     prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
@@ -131,7 +147,7 @@ def enhance_topic(topic, style):
 def get_caption_prompt(style, topic, context):
     strategies = {
         "🔥 Viral / Debate (Ask Questions)": "Punchy caption. Ask 'Real or Fake?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on a detail. Ask to zoom in.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a detail. Ask them to zoom in.",
         "📖 Storyteller (Creepypasta)": "3-sentence mini horror story.",
         "😱 Pure Panic (Short & Scary)": "Short, terrified. Use ⚠️👻."
     }
@@ -170,7 +186,7 @@ with tab_gen:
                     st.rerun()
             
             st.divider()
-            st.write("🔍 **Review Pending Facts**")
+            st.write("🔍 **Review Facts**")
             pending = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
             if pending:
                 for f in pending:
@@ -182,36 +198,54 @@ with tab_gen:
                     with b2:
                         if st.button("❌", key=f"no_{f['id']}"): 
                             supabase.table("brand_knowledge").delete().eq("id", f['id']).execute(); st.rerun()
-            else: st.write("✅ No facts to review.")
 
         with c_body:
-            st.subheader("Nano Banana Realism")
+            st.subheader("Nano Banana Generator")
             if "enhanced_topic" not in st.session_state: st.session_state.enhanced_topic = ""
             topic = st.text_area("Subject:", value=st.session_state.enhanced_topic, placeholder="e.g. Shadow figure...", height=100)
-            c1, c2 = st.columns(2)
-            with c1: style_choice = st.selectbox("Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
-            with c2:
+            
+            c_rand, c_enh = st.columns(2)
+            with c_rand:
+                if st.button("🎲 RANDOMISE SUBJECT"):
+                    with st.spinner("AI Brainstorming..."):
+                        st.session_state.enhanced_topic = generate_random_ghost_topic(); st.rerun()
+            with c_enh:
                 if st.button("🪄 ENHANCE DETAILS"):
                     st.session_state.enhanced_topic = enhance_topic(topic, style_choice); st.rerun()
             
-            cap_style = st.selectbox("Strategy", ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"])
+            c1, c2 = st.columns(2)
+            with c1: style_choice = st.selectbox("Style", STYLE_OPTIONS)
+            with c2: post_count = st.slider("Posts to Generate", 1, 5, 1)
+            
+            cap_style = st.selectbox("Strategy", STRATEGY_OPTIONS)
 
-            if st.button("🚀 GENERATE WITH NANO", type="primary"):
-                with st.spinner("Invoking Imagen 4 Ultra..."):
+            if st.button("🚀 GENERATE DRAFTS", type="primary"):
+                with st.spinner(f"Manufacturing {post_count} Evidence Files..."):
                     try:
-                        caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": get_caption_prompt(cap_style, topic, get_brand_knowledge())}]).choices[0].message.content
-                        img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
-                        url = save_ai_image_to_storage(img_resp.generated_images[0].image.image_bytes)
-                        if url:
-                            supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": topic, "status": "draft"}).execute()
-                            st.session_state.enhanced_topic = ""; st.rerun()
+                        for i in range(post_count):
+                            # Logic: If manual topic is entered, use it for all (or variations). 
+                            # If empty, pick a new random one for each post.
+                            iter_topic = topic if (topic and post_count == 1) else (topic if (topic and i == 0) else generate_random_ghost_topic())
+                            
+                            caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": get_caption_prompt(cap_style, iter_topic, get_brand_knowledge())}]).choices[0].message.content
+                            img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=iter_topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
+                            url = save_ai_image_to_storage(img_resp.generated_images[0].image.image_bytes)
+                            if url:
+                                supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": iter_topic, "status": "draft"}).execute()
+                        
+                        st.session_state.enhanced_topic = ""; st.success(f"{post_count} Drafts Secured!"); st.rerun()
                     except Exception as e: st.error(e)
 
 with tab_upload:
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("1. Upload")
+    c_up, c_lib = st.columns([1, 1])
+    with c_up:
+        st.subheader("1. Upload & Settings")
         f = st.file_uploader("Evidence", type=['jpg', 'png', 'jpeg'])
+        
+        # RESTORED OPTIONS
+        u_style = st.selectbox("Visual Style (Applies to AI context)", STYLE_OPTIONS, key="u_style")
+        u_strategy = st.selectbox("Caption Strategy", STRATEGY_OPTIONS, key="u_strat")
+        
         if f:
             image = ImageOps.exif_transpose(Image.open(f))
             cropped = st_cropper(image, aspect_ratio=(1,1), box_color='#00ff41')
@@ -221,20 +255,24 @@ with tab_upload:
                 supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                 supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                 st.success("Saved!"); st.rerun()
-    with c2:
+                
+    with c_lib:
         st.subheader("2. Library")
         lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(4).execute().data
         if lib:
             for img in lib:
-                col_i, col_a = st.columns([1, 2])
-                with col_i: st.image(img['file_url'], use_column_width=True)
-                with col_a:
-                    if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                        prompt = get_caption_prompt("🔥 Viral / Debate (Ask Questions)", "Spooky", get_brand_knowledge())
-                        resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=300)
-                        supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Evidence", "status": "draft"}).execute(); st.rerun()
-                    if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
+                with st.container(border=True):
+                    col_i, col_a = st.columns([1, 2])
+                    with col_i: st.image(img['file_url'], use_column_width=True)
+                    with col_a:
+                        if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
+                            with st.spinner("AI Analysis..."):
+                                prompt = get_caption_prompt(u_strategy, f"Investigation evidence photo ({u_style})", get_brand_knowledge())
+                                resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=300)
+                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute(); st.rerun()
+                        if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
+# --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER</h2>", unsafe_allow_html=True)
 d1, d2, d3 = st.tabs(["📝 DRAFTS", "📅 SCHEDULED", "📜 HISTORY"])
@@ -248,7 +286,6 @@ with d1:
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
                 din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
-                # ORGANIZED BUTTONS
                 b_col1, b_col2, b_col3 = st.columns(3)
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}"):
@@ -280,7 +317,6 @@ with d3:
             with ci: st.image(p['image_url'], use_column_width=True)
             with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
 
-# --- SYSTEM MAINTENANCE SECTION ---
 st.markdown("---")
 with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
     sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
