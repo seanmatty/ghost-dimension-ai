@@ -57,6 +57,7 @@ st.markdown("""
         border: 1px solid #00ff41 !important; 
         border-radius: 8px; 
         font-weight: 500;
+        width: 100%;
     }
     .stButton > button:hover {
         background-color: #00ff41 !important; 
@@ -168,7 +169,6 @@ with tab_gen:
                         if len(clean) > 10: supabase.table("brand_knowledge").insert({"source_url": "Manual", "fact_summary": clean, "status": "pending"}).execute()
                     st.rerun()
             
-            # --- RESTORED FACT REVIEW SECTION ---
             st.divider()
             st.write("🔍 **Review Pending Facts**")
             pending = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
@@ -248,11 +248,18 @@ with d1:
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
                 din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
-                if st.button("📅 Schedule", key=f"s_{p['id']}"):
-                    supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
-                if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
-                    requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap})
-                    supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute(); st.rerun()
+                # ORGANIZED BUTTONS
+                b_col1, b_col2, b_col3 = st.columns(3)
+                with b_col1:
+                    if st.button("📅 Schedule", key=f"s_{p['id']}"):
+                        supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
+                with b_col2:
+                    if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
+                        requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap})
+                        supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute(); st.rerun()
+                with b_col3:
+                    if st.button("🗑️", key=f"del_{p['id']}"):
+                        supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
 
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
