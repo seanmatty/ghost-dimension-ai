@@ -3,7 +3,6 @@ import hmac
 from openai import OpenAI
 from google import genai
 from google.genai import types
-from subtitle_utils import * # Hypothetical, keep imports clean
 from supabase import create_client
 import requests
 from datetime import datetime, time, timedelta
@@ -97,8 +96,7 @@ supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
 # --- GLOBAL OPTIONS ---
-STYLE_OPTIONS = ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"]
-STRATEGY_OPTIONS = ["🎲 AI Choice (Random Strategy)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
+STRATEGY_OPTIONS = ["🎲 AI Choice (Spooky Random)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
 # --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
@@ -129,26 +127,26 @@ def save_ai_image_to_storage(image_bytes):
 
 def generate_random_ghost_topic():
     knowledge = get_brand_knowledge()
-    prompt = f"Brainstorm a single paranormal subject for a photography prompt. Context: {knowledge if knowledge else 'British hauntings'}. Result must be one sentence, max 20 words."
+    prompt = f"Brainstorm a single paranormal subject for a photography prompt. Use this Brand Knowledge context: {knowledge if knowledge else 'British hauntings'}. Result must be one sentence, max 20 words."
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
 def enhance_topic(topic, style):
-    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: Gear: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
+    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
 def get_caption_prompt(style, topic, context):
     strategies = {
-        "🎲 AI Choice (Random Strategy)": "Analyze the photo. Pick the spookiest angle. Look for anomalies. Weave in brand facts.",
-        "🔥 Viral / Debate (Ask Questions)": "Look for something odd. Ask 'Did anyone else see that?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on technical anomalies. Mention orbs or EVP-like atmosphere.",
-        "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story about the location.",
-        "😱 Pure Panic (Short & Scary)": "Short, terrified reaction. Mention something 'following' the subjects."
+        "🎲 AI Choice (Spooky Random)": "Analyze the photo/topic. DO NOT BE LITERAL. Look for lurking shadows or orbs. Pick the spookiest angle and connect it to brand facts.",
+        "🔥 Viral / Debate (Ask Questions)": "Punchy caption. Ask 'Real or Fake?'.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a detail. Ask them to zoom in.",
+        "📖 Storyteller (Creepypasta)": "3-sentence mini horror story.",
+        "😱 Pure Panic (Short & Scary)": "Short, terrified. Use ⚠️👻."
     }
-    return f"Role: Paranormal Investigator. Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
+    return f"Role: Social Manager. Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
 
-# --- MAIN TITLE ---
+# --- MAIN TITLE & COUNTER ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>SOCIAL MANAGER</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
@@ -196,26 +194,27 @@ with tab_gen:
             else: st.write("✅ No facts to review.")
 
         with c_body:
-            st.subheader("Nano Banana Generator")
+            st.subheader("Nano Banana Realism")
             if "enhanced_topic" not in st.session_state: st.session_state.enhanced_topic = ""
             topic = st.text_area("Subject:", value=st.session_state.enhanced_topic, placeholder="e.g. Shadow figure...", height=100)
             
+            # --- NEW RANDOMISER & ENHANCER ROW ---
             c_rand, c_enh = st.columns(2)
             with c_rand:
-                if st.button("🎲 RANDOMISE SUBJECT"):
+                if st.button("🎲 RANDOMISE FROM FACTS"):
                     st.session_state.enhanced_topic = generate_random_ghost_topic(); st.rerun()
             with c_enh:
                 if st.button("🪄 ENHANCE DETAILS"):
-                    st.session_state.enhanced_topic = enhance_topic(topic, style_choice); st.rerun()
-            
+                    st.session_state.enhanced_topic = enhance_topic(topic, "CCTV"); st.rerun()
+
             c1, c2 = st.columns(2)
-            with c1: style_choice = st.selectbox("Style", STYLE_OPTIONS)
-            with c2: post_count = st.slider("Posts to Generate", 1, 5, 1)
+            with c1: style_choice = st.selectbox("Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
+            with c2: post_count = st.slider("Quantity to Generate", 1, 5, 1)
             
             cap_style = st.selectbox("Strategy", STRATEGY_OPTIONS)
 
             if st.button("🚀 GENERATE DRAFTS", type="primary"):
-                with st.spinner(f"Manufacturing {post_count} Evidence Files..."):
+                with st.spinner(f"Summoning {post_count} ghosts..."):
                     try:
                         for i in range(post_count):
                             iter_topic = topic if (topic and post_count == 1) else generate_random_ghost_topic()
@@ -229,12 +228,9 @@ with tab_gen:
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     with c_up:
-        st.subheader("1. Upload & Settings")
+        st.subheader("1. Upload")
         f = st.file_uploader("Evidence", type=['jpg', 'png', 'jpeg'])
-        
-        # REMOVED VISUAL STYLE - NOW AUTOMATIC
         u_strategy = st.selectbox("Caption Strategy", STRATEGY_OPTIONS, key="u_strat")
-        
         if f:
             image = ImageOps.exif_transpose(Image.open(f))
             cropped = st_cropper(image, aspect_ratio=(1,1), box_color='#00ff41')
@@ -244,7 +240,6 @@ with tab_upload:
                 supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                 supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                 st.success("Saved!"); st.rerun()
-                
     with c_lib:
         st.subheader("2. Library")
         lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(4).execute().data
@@ -255,30 +250,19 @@ with tab_upload:
                     with col_i: st.image(img['file_url'], use_column_width=True)
                     with col_a:
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("Analyzing original pixels..."):
-                                # Vision prompt updated to be self-detecting
-                                vision_prompt = f"""You are the Lead Paranormal Investigator for 'Ghost Dimension'. 
-                                FACTUAL CONTEXT: {get_brand_knowledge()}
+                            with st.spinner("Analyzing Evidence..."):
+                                # VISION PROMPT: Forced Spookiness
+                                vision_prompt = f"""You are the Lead Investigator for 'Ghost Dimension'.
+                                BRAND FACTS: {get_brand_knowledge()}
                                 STRATEGY: {u_strategy}
-                                
-                                TASK: 
-                                1. Analyze this investigation photo. Detect its visual atmosphere (grainy, CCTV, film).
-                                2. SUSPEND DISBELIEF. Identify paranormal anomalies lurking near the subjects or in the background.
-                                3. Connect the anomalies to the Brand Facts provided.
-                                4. Write a terrifying social media caption using the Strategy above.
-                                5. Mention specific visual cues in the photo to ground the evidence."""
-                                
-                                resp = openai_client.chat.completions.create(
-                                    model="gpt-4o", 
-                                    messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
-                                    max_tokens=400
-                                )
-                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute()
-                                st.success("Draft created!"); st.rerun()
-                        if st.button("🗑️", key=f"d_{img['id']}"): 
-                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
+                                TASK: Look at this photo. SUSPEND DISBELIEF. Do not say it is normal. 
+                                Find potential anomalies (shadow figures, light orbs, distortions). 
+                                Connect what you 'see' to the BRAND FACTS provided.
+                                Write a terrifying social media caption."""
+                                resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=400)
+                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute(); st.rerun()
+                        if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER</h2>", unsafe_allow_html=True)
 d1, d2, d3 = st.tabs(["📝 DRAFTS", "📅 SCHEDULED", "📜 HISTORY"])
