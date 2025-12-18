@@ -97,7 +97,7 @@ MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
 # --- GLOBAL OPTIONS ---
 STYLE_OPTIONS = ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"]
-STRATEGY_OPTIONS = ["🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
+STRATEGY_OPTIONS = ["🎲 AI Choice (Random Strategy)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
 # --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
@@ -121,7 +121,6 @@ def get_brand_knowledge():
 
 def save_ai_image_to_storage(image_bytes):
     try:
-        # Added %f (microseconds) to filename to prevent collisions in bulk generation
         filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
         supabase.storage.from_("uploads").upload(filename, image_bytes, {"content-type": "image/png"})
         return supabase.storage.from_("uploads").get_public_url(filename)
@@ -129,23 +128,19 @@ def save_ai_image_to_storage(image_bytes):
         st.error(f"Save failed: {e}"); return None
 
 def generate_random_ghost_topic():
-    """AI Randomizer: Uses Brand Knowledge + Engagement logic to brainstorm a topic."""
     knowledge = get_brand_knowledge()
-    prompt = f"""Role: Social Media Producer for 'Ghost Dimension'.
-    Context: {knowledge if knowledge else 'British paranormal investigations'}.
-    Task: Brainstorm ONE unique, terrifying paranormal scene for a photography prompt. 
-    Focus on visual engagement (shadows, figures, orbs). 
-    Max 20 words."""
+    prompt = f"Brainstorm a single paranormal subject for a photography prompt. Context: {knowledge if knowledge else 'British hauntings'}. Result must be one sentence, max 20 words."
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
 def enhance_topic(topic, style):
-    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
+    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: Gear: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
 def get_caption_prompt(style, topic, context):
     strategies = {
+        "🎲 AI Choice (Random Strategy)": "Analyze the image first. Pick the most engaging paranormal strategy (Viral, Storyteller, or Investigator) based on what you see.",
         "🔥 Viral / Debate (Ask Questions)": "Punchy caption. Ask 'Real or Fake?'.",
         "🕵️ Investigator (Analyze Detail)": "Focus on a detail. Ask them to zoom in.",
         "📖 Storyteller (Creepypasta)": "3-sentence mini horror story.",
@@ -207,8 +202,7 @@ with tab_gen:
             c_rand, c_enh = st.columns(2)
             with c_rand:
                 if st.button("🎲 RANDOMISE SUBJECT"):
-                    with st.spinner("AI Brainstorming..."):
-                        st.session_state.enhanced_topic = generate_random_ghost_topic(); st.rerun()
+                    st.session_state.enhanced_topic = generate_random_ghost_topic(); st.rerun()
             with c_enh:
                 if st.button("🪄 ENHANCE DETAILS"):
                     st.session_state.enhanced_topic = enhance_topic(topic, style_choice); st.rerun()
@@ -223,17 +217,12 @@ with tab_gen:
                 with st.spinner(f"Manufacturing {post_count} Evidence Files..."):
                     try:
                         for i in range(post_count):
-                            # Logic: If manual topic is entered, use it for all (or variations). 
-                            # If empty, pick a new random one for each post.
-                            iter_topic = topic if (topic and post_count == 1) else (topic if (topic and i == 0) else generate_random_ghost_topic())
-                            
+                            iter_topic = topic if (topic and post_count == 1) else generate_random_ghost_topic()
                             caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": get_caption_prompt(cap_style, iter_topic, get_brand_knowledge())}]).choices[0].message.content
                             img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=iter_topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
                             url = save_ai_image_to_storage(img_resp.generated_images[0].image.image_bytes)
-                            if url:
-                                supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": iter_topic, "status": "draft"}).execute()
-                        
-                        st.session_state.enhanced_topic = ""; st.success(f"{post_count} Drafts Secured!"); st.rerun()
+                            if url: supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": iter_topic, "status": "draft"}).execute()
+                        st.session_state.enhanced_topic = ""; st.rerun()
                     except Exception as e: st.error(e)
 
 with tab_upload:
@@ -241,9 +230,7 @@ with tab_upload:
     with c_up:
         st.subheader("1. Upload & Settings")
         f = st.file_uploader("Evidence", type=['jpg', 'png', 'jpeg'])
-        
-        # RESTORED OPTIONS
-        u_style = st.selectbox("Visual Style (Applies to AI context)", STYLE_OPTIONS, key="u_style")
+        u_style = st.selectbox("Visual Style (Context)", STYLE_OPTIONS, key="u_style")
         u_strategy = st.selectbox("Caption Strategy", STRATEGY_OPTIONS, key="u_strat")
         
         if f:
@@ -266,11 +253,18 @@ with tab_upload:
                     with col_i: st.image(img['file_url'], use_column_width=True)
                     with col_a:
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("AI Analysis..."):
-                                prompt = get_caption_prompt(u_strategy, f"Investigation evidence photo ({u_style})", get_brand_knowledge())
-                                resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=300)
-                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute(); st.rerun()
-                        if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
+                            with st.spinner("AI analyzing your evidence..."):
+                                # This prompt instructs GPT-4o to analyze the actual image and write based on the visual evidence.
+                                prompt = get_caption_prompt(u_strategy, f"Actual investigation photo in {u_style} style. Analyze the pixels for any anomalies.", get_brand_knowledge())
+                                resp = openai_client.chat.completions.create(
+                                    model="gpt-4o", 
+                                    messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
+                                    max_tokens=400
+                                )
+                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute()
+                                st.success("Draft created!"); st.rerun()
+                        if st.button("🗑️", key=f"d_{img['id']}"): 
+                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
 # --- COMMAND CENTER ---
 st.markdown("---")
