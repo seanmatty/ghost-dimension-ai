@@ -3,6 +3,7 @@ import hmac
 from openai import OpenAI
 from google import genai
 from google.genai import types
+from subtitle_utils import * # Hypothetical, keep imports clean
 from supabase import create_client
 import requests
 from datetime import datetime, time, timedelta
@@ -111,8 +112,7 @@ def scrape_website(url):
         page = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if page.status_code == 200:
             soup = BeautifulSoup(page.content, "html.parser")
-            text = ' '.join([p.text for p in soup.find_all('p')])
-            return text[:6000] if len(text) > 50 else None
+            return ' '.join([p.text for p in soup.find_all('p')])[:6000]
     except: return None
 
 def get_brand_knowledge():
@@ -140,13 +140,13 @@ def enhance_topic(topic, style):
 
 def get_caption_prompt(style, topic, context):
     strategies = {
-        "🎲 AI Choice (Random Strategy)": "Analyze the image first. Pick the most engaging paranormal strategy (Viral, Storyteller, or Investigator) based on what you see.",
-        "🔥 Viral / Debate (Ask Questions)": "Punchy caption. Ask 'Real or Fake?'.",
-        "🕵️ Investigator (Analyze Detail)": "Focus on a detail. Ask them to zoom in.",
-        "📖 Storyteller (Creepypasta)": "3-sentence mini horror story.",
-        "😱 Pure Panic (Short & Scary)": "Short, terrified. Use ⚠️👻."
+        "🎲 AI Choice (Random Strategy)": "Analyze the photo. Pick the spookiest angle. Look for anomalies. Weave in brand facts.",
+        "🔥 Viral / Debate (Ask Questions)": "Look for something odd. Ask 'Did anyone else see that?'.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on technical anomalies. Mention orbs or EVP-like atmosphere.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story about the location.",
+        "😱 Pure Panic (Short & Scary)": "Short, terrified reaction. Mention something 'following' the subjects."
     }
-    return f"Role: Social Manager. Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
+    return f"Role: Paranormal Investigator. Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
@@ -181,7 +181,7 @@ with tab_gen:
                     st.rerun()
             
             st.divider()
-            st.write("🔍 **Review Facts**")
+            st.write("🔍 **Review Pending Facts**")
             pending = supabase.table("brand_knowledge").select("*").eq("status", "pending").execute().data
             if pending:
                 for f in pending:
@@ -193,6 +193,7 @@ with tab_gen:
                     with b2:
                         if st.button("❌", key=f"no_{f['id']}"): 
                             supabase.table("brand_knowledge").delete().eq("id", f['id']).execute(); st.rerun()
+            else: st.write("✅ No facts to review.")
 
         with c_body:
             st.subheader("Nano Banana Generator")
@@ -230,7 +231,8 @@ with tab_upload:
     with c_up:
         st.subheader("1. Upload & Settings")
         f = st.file_uploader("Evidence", type=['jpg', 'png', 'jpeg'])
-        u_style = st.selectbox("Visual Style (Context)", STYLE_OPTIONS, key="u_style")
+        
+        # REMOVED VISUAL STYLE - NOW AUTOMATIC
         u_strategy = st.selectbox("Caption Strategy", STRATEGY_OPTIONS, key="u_strat")
         
         if f:
@@ -253,12 +255,22 @@ with tab_upload:
                     with col_i: st.image(img['file_url'], use_column_width=True)
                     with col_a:
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("AI analyzing your evidence..."):
-                                # This prompt instructs GPT-4o to analyze the actual image and write based on the visual evidence.
-                                prompt = get_caption_prompt(u_strategy, f"Actual investigation photo in {u_style} style. Analyze the pixels for any anomalies.", get_brand_knowledge())
+                            with st.spinner("Analyzing original pixels..."):
+                                # Vision prompt updated to be self-detecting
+                                vision_prompt = f"""You are the Lead Paranormal Investigator for 'Ghost Dimension'. 
+                                FACTUAL CONTEXT: {get_brand_knowledge()}
+                                STRATEGY: {u_strategy}
+                                
+                                TASK: 
+                                1. Analyze this investigation photo. Detect its visual atmosphere (grainy, CCTV, film).
+                                2. SUSPEND DISBELIEF. Identify paranormal anomalies lurking near the subjects or in the background.
+                                3. Connect the anomalies to the Brand Facts provided.
+                                4. Write a terrifying social media caption using the Strategy above.
+                                5. Mention specific visual cues in the photo to ground the evidence."""
+                                
                                 resp = openai_client.chat.completions.create(
                                     model="gpt-4o", 
-                                    messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
+                                    messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
                                     max_tokens=400
                                 )
                                 supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Manual Upload", "status": "draft"}).execute()
