@@ -132,7 +132,7 @@ def generate_random_ghost_topic():
     return resp.choices[0].message.content
 
 def enhance_topic(topic, style):
-    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
+    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: Gear: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
     resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
     return resp.choices[0].message.content
 
@@ -142,7 +142,7 @@ def get_caption_prompt(style, topic, context):
         "🔥 Viral / Debate (Ask Questions)": "Write a short, debating caption. Ask 'Real or Fake?'. Tag @GhostDimension.",
         "🕵️ Investigator (Analyze Detail)": "Focus on a background anomaly. Tell them to watch the latest Ghost Dimension episode to see how we track this energy.",
         "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story that sounds like a Ghost Dimension teaser.",
-        "😱 Pure Panic (Short & Scary)": "Short, terrifying caption. 'We weren't alone in this episode...' Use ⚠️👻."
+        "😱 Pure Panic (Short & Scary)": "Short, terrified caption. 'We weren't alone in this episode...' Use ⚠️👻."
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
 
@@ -239,29 +239,26 @@ with tab_upload:
                 supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                 supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                 st.success("Saved!"); st.rerun()
+    
+    # --- UPDATED LIBRARY GRID VIEW (FIXED ISSUE) ---
     with c_lib:
-        st.subheader("2. Library")
-        lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).limit(4).execute().data
+        st.subheader("2. Library (All)")
+        # Removed limit(4) so you see everything
+        lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
+        
         if lib:
-            for img in lib:
-                with st.container(border=True):
-                    col_i, col_a = st.columns([1, 2])
-                    with col_i: st.image(img['file_url'], use_column_width=True)
-                    with col_a:
+            # Create a 3-column grid for neatness
+            cols = st.columns(3)
+            for idx, img in enumerate(lib):
+                with cols[idx % 3]:  # This cycles through columns 0, 1, 2
+                    with st.container(border=True):
+                        st.image(img['file_url'], use_container_width=True)
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("Preparing Brand Teaser..."):
-                                # --- UPDATED BRANDED PROMPT ---
+                            with st.spinner("Analyzing..."):
                                 vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
                                 BRAND FACTS: {get_brand_knowledge()}
-                                
-                                TASK:
-                                1. Write a social media caption for this photo.
-                                2. DO NOT use technical headers or descriptions.
-                                3. Hook the audience with a spooky observation in the photo.
-                                4. Pivot immediately to promoting our show 'Ghost Dimension'.
-                                5. Mention specific episodes or the history from our BRAND FACTS to prove our expertise.
-                                6. Tell people to watch the show for the full investigation.
-                                7. Strategy to use: {u_strategy}."""
+                                TASK: Write a scary, promotional social media caption for this photo. 
+                                Mention specific episodes or history. Strategy: {u_strategy}."""
                                 
                                 resp = openai_client.chat.completions.create(
                                     model="gpt-4o", 
@@ -269,8 +266,9 @@ with tab_upload:
                                     max_tokens=400
                                 )
                                 supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Promotional Upload", "status": "draft"}).execute()
-                                st.success("Branded Draft Created!"); st.rerun()
-                        if st.button("🗑️", key=f"d_{img['id']}"): supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
+                                st.success("Draft Created!"); st.rerun()
+                        if st.button("🗑️", key=f"d_{img['id']}"): 
+                            supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -298,6 +296,7 @@ with d1:
                     if st.button("🗑️", key=f"del_{p['id']}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
 
+# --- UPDATED SCHEDULED TAB (FIXED VISIBILITY) ---
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -305,7 +304,9 @@ with d2:
             ci, ct = st.columns([1, 3])
             with ci: st.image(p['image_url'], use_column_width=True)
             with ct:
-                st.write(f"⏰ Due: {p['scheduled_time']} UTC")
+                st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
+                # Added View-Only Text Area so you can see the full caption
+                st.text_area("Scheduled Caption", p['caption'], height=100, disabled=True, key=f"view_{p['id']}")
                 if st.button("❌ ABORT", key=f"can_{p['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
 
