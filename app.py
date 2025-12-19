@@ -18,6 +18,8 @@ st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wi
 
 # --- CUSTOM CSS ---
 st.markdown("""
+
+<style>
 /* FORCE WHITE TEXT ON DISABLED INPUTS */
 .stTextArea textarea:disabled {
     color: #ffffff !important;
@@ -26,7 +28,6 @@ st.markdown("""
     background-color: #121212 !important;
     border: 1px solid #333 !important;
 }
-<style>
     .stApp { background-color: #050505; color: #e0e0e0; }
     h1, h2, h3 {
         color: #00ff41 !important; 
@@ -336,4 +337,5 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
