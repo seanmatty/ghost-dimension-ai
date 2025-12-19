@@ -18,7 +18,6 @@ st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wi
 
 # --- CUSTOM CSS ---
 st.markdown("""
-
 <style>
 /* FORCE WHITE TEXT ON DISABLED INPUTS */
 .stTextArea textarea:disabled {
@@ -153,7 +152,8 @@ def get_caption_prompt(style, topic, context):
         "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story that sounds like a Ghost Dimension teaser.",
         "😱 Pure Panic (Short & Scary)": "Short, terrified caption. 'We weren't alone in this episode...' Use ⚠️👻."
     }
-    return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}"
+    # ADDED STRICT INSTRUCTION HERE
+    return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
@@ -249,25 +249,24 @@ with tab_upload:
                 supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                 st.success("Saved!"); st.rerun()
     
-    # --- UPDATED LIBRARY GRID VIEW (FIXED ISSUE) ---
     with c_lib:
         st.subheader("2. Library (All)")
-        # Removed limit(4) so you see everything
         lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
         
         if lib:
-            # Create a 3-column grid for neatness
             cols = st.columns(3)
             for idx, img in enumerate(lib):
-                with cols[idx % 3]:  # This cycles through columns 0, 1, 2
+                with cols[idx % 3]: 
                     with st.container(border=True):
                         st.image(img['file_url'], use_container_width=True)
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
+                                # --- UPDATED STRICT PROMPT ---
                                 vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
                                 BRAND FACTS: {get_brand_knowledge()}
                                 TASK: Write a scary, promotional social media caption for this photo. 
-                                Mention specific episodes or history. Strategy: {u_strategy}."""
+                                Mention specific episodes or history. Strategy: {u_strategy}.
+                                IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:', 'Here is the caption:', or any headers."""
                                 
                                 resp = openai_client.chat.completions.create(
                                     model="gpt-4o", 
@@ -305,7 +304,6 @@ with d1:
                     if st.button("🗑️", key=f"del_{p['id']}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
 
-# --- UPDATED SCHEDULED TAB (FIXED VISIBILITY) ---
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -314,7 +312,6 @@ with d2:
             with ci: st.image(p['image_url'], use_column_width=True)
             with ct:
                 st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
-                # Added View-Only Text Area so you can see the full caption
                 st.text_area("Scheduled Caption", p['caption'], height=100, disabled=True, key=f"view_{p['id']}")
                 if st.button("❌ ABORT", key=f"can_{p['id']}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
@@ -337,5 +334,3 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
-
-
