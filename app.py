@@ -12,9 +12,9 @@ import urllib.parse
 from PIL import Image, ImageOps
 import io
 from streamlit_cropper import st_cropper 
-# --- NEW IMPORTS ---
 import cv2
 import numpy as np
+import os
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -81,8 +81,6 @@ st.markdown("""
         font-weight: bold !important;
     }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
-    /* Checkbox Styling */
-    .stCheckbox label { color: #00ff41 !important; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -159,23 +157,19 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- NEW: DROPBOX STREAMING LOGIC ---
+# --- DROPBOX STREAMING LOGIC ---
 def extract_frames_from_url(video_url, num_frames):
-    # Fix Dropbox link to be a direct download link
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
     
     try:
-        # Open video stream
         cap = cv2.VideoCapture(video_url)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total_frames <= 0: return []
         
-        # Calculate indices
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
         frames = []
         
-        # Extract specific frames (Streaming)
         for idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
@@ -311,9 +305,9 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: DROPBOX SCANNER (BULK MODE) ---
+# --- TAB 3: DROPBOX SCANNER (CROP MODE) ---
 with tab_dropbox:
-    st.subheader("🎥 Bulk Frame Extraction")
+    st.subheader("🎥 Remote Forensic Scanner")
     
     # Initialize session state for selections
     if "db_frames" not in st.session_state: st.session_state.db_frames = []
@@ -328,55 +322,51 @@ with tab_dropbox:
         else:
             st.warning("Paste a link first.")
 
+    # Show Frames
     if st.session_state.db_frames:
         st.divider()
-        st.markdown("### 🕵️ Select Evidence")
-        
-        # We need a form or button to submit selections
-        # Since Streamlit checkboxes trigger reruns, we process the save by checking the state directly
-        
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            if st.button("✅ SAVE SELECTED TO VAULT", type="primary"):
-                # Find which boxes were checked
-                selected_indices = []
-                for i in range(len(st.session_state.db_frames)):
-                    if st.session_state.get(f"chk_{i}", False):
-                        selected_indices.append(i)
-                
-                if not selected_indices:
-                    st.warning("No images selected.")
-                else:
-                    with st.spinner(f"Uploading {len(selected_indices)} images..."):
-                        for idx in selected_indices:
-                            img = st.session_state.db_frames[idx]
-                            buf = io.BytesIO()
-                            img.save(buf, format="JPEG", quality=85)
-                            fname = f"bulk_ev_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}.jpg"
-                            
-                            # Upload
-                            supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                            supabase.table("uploaded_images").insert({
-                                "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
-                                "filename": fname
-                            }).execute()
-                    st.success(f"Success! {len(selected_indices)} frames secured in the vault.")
-                    # Optional: Clear after save
-                    # st.session_state.db_frames = [] 
-                    # st.rerun()
-
-        with c2:
-            if st.button("🗑️ DISCARD ALL SCAN"):
+        c_head, c_act = st.columns([2, 1])
+        with c_head: st.write(f"🔍 Found {len(st.session_state.db_frames)} frames.")
+        with c_act:
+            if st.button("🗑️ CLEAR SCAN"):
                 st.session_state.db_frames = []
+                st.session_state.frame_to_crop = None
                 st.rerun()
+        
+        # If we have selected a frame to crop, show the CROPPER at the top
+        if "frame_to_crop" in st.session_state and st.session_state.frame_to_crop is not None:
+            st.markdown("### ✂️ CROP EVIDENCE")
+            c_cr, c_info = st.columns([2, 1])
+            with c_cr:
+                cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="db_cropper")
+            with c_info:
+                st.info("Adjust the green box to square format.")
+                if st.button("✅ SAVE CROP TO LIBRARY", type="primary"):
+                    buf = io.BytesIO()
+                    cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
+                    fname = f"db_crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                    supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
+                    supabase.table("uploaded_images").insert({
+                        "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
+                        "filename": fname
+                    }).execute()
+                    st.success("Saved! Check 'UPLOAD IMAGE' tab.")
+                    # Close cropper
+                    st.session_state.frame_to_crop = None
+                    st.rerun()
+                if st.button("❌ CANCEL CROP"):
+                    st.session_state.frame_to_crop = None
+                    st.rerun()
+            st.divider()
 
-        # Grid View
-        cols = st.columns(4)
+        # Grid of Thumbnails
+        cols = st.columns(5)
         for i, frame in enumerate(st.session_state.db_frames):
-            with cols[i % 4]:
+            with cols[i % 5]:
                 st.image(frame, use_container_width=True)
-                # Checkbox
-                st.checkbox(f"Select #{i+1}", key=f"chk_{i}")
+                if st.button("✂️ CROP", key=f"cr_{i}"):
+                    st.session_state.frame_to_crop = frame
+                    st.rerun()
 
 # --- COMMAND CENTER ---
 st.markdown("---")
