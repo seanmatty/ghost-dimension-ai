@@ -9,3 +9,4 @@ streamlit-cropper
 google-genai
 yt-dlp
 opencv-python-headless
+moviepy
