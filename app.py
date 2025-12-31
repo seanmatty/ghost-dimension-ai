@@ -12,14 +12,10 @@ import urllib.parse
 from PIL import Image, ImageOps
 import io
 from streamlit_cropper import st_cropper 
-# --- NEW IMPORTS FOR VIDEO ---
 import cv2
 import yt_dlp
 import numpy as np
 import os
-import tempfile
-# MOVIEPY
-from moviepy.editor import ImageClip, concatenate_videoclips, CompositeVideoClip, ColorClip
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -162,11 +158,11 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- UPDATED VIDEO PROCESSING (SPEED MODE) ---
+# --- UPDATED VIDEO PROCESSING (NO AUDIO) ---
 def process_video_and_extract_frames(url, num_frames):
-    # FORCE 480p or less to prevent crashing on large files
+    # FORCE NO AUDIO (This fixes the empty file error)
     ydl_opts = {
-        'format': 'best[height<=480][ext=mp4]/best[ext=mp4]', 
+        'format': 'bestvideo[height<=480][ext=mp4]', # Video only, 480p max
         'outtmpl': 'temp_video.mp4', 
         'quiet': True,
         'no_warnings': True
@@ -175,8 +171,8 @@ def process_video_and_extract_frames(url, num_frames):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         
-        # Verify file exists before reading
-        if not os.path.exists('temp_video.mp4'):
+        # Verify file exists and has size
+        if not os.path.exists('temp_video.mp4') or os.path.getsize('temp_video.mp4') == 0:
             return []
 
         cap = cv2.VideoCapture('temp_video.mp4')
@@ -200,26 +196,10 @@ def process_video_and_extract_frames(url, num_frames):
         if os.path.exists('temp_video.mp4'): os.remove('temp_video.mp4')
         return extracted
     except Exception as e:
-        st.error(f"Video Scan Failed: {e}")
+        # Check if file exists to delete it even on error
         if os.path.exists('temp_video.mp4'): os.remove('temp_video.mp4')
+        st.error(f"Video Scan Failed: {e}")
         return []
-
-# --- REEL MAKER LOGIC ---
-def create_reel_from_images(image_urls, duration_per_slide):
-    clips = []
-    w, h = 1080, 1920
-    for url in image_urls:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as f:
-            f.write(requests.get(url).content)
-            temp_fname = f.name
-        img_clip = ImageClip(temp_fname).set_duration(duration_per_slide).resize(width=w)
-        bg = ColorClip(size=(w, h), color=(0,0,0), duration=duration_per_slide)
-        final_clip = CompositeVideoClip([bg, img_clip.set_position("center")])
-        clips.append(final_clip)
-    final_video = concatenate_videoclips(clips, method="compose")
-    output_path = "temp_reel.mp4"
-    final_video.write_videofile(output_path, fps=24, codec="libx264", audio=False)
-    return output_path
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
@@ -227,7 +207,7 @@ st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIM
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # --- TABS ---
-tab_gen, tab_upload, tab_video, tab_reel = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "🎥 VIDEO SCANNER", "🎞️ REEL MAKER"])
+tab_gen, tab_upload, tab_video = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "🎥 VIDEO SCANNER"])
 
 with tab_gen:
     with st.container(border=True):
@@ -344,7 +324,7 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: VIDEO SCANNER (FIXED FOR SPEED) ---
+# --- TAB 3: VIDEO SCANNER (SPEED MODE) ---
 with tab_video:
     st.subheader("YouTube Frame Extraction")
     if "extracted_frames" not in st.session_state: st.session_state.extracted_frames = []
@@ -394,31 +374,6 @@ with tab_video:
                     supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                     supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                     st.success("Evidence Secured!"); st.rerun()
-
-# --- TAB 4: REEL MAKER ---
-with tab_reel:
-    st.subheader("🎞️ Construct Reel from Library")
-    lib_images = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
-    if lib_images:
-        img_options = {f"Image {i['id']} ({i['filename']})": i['file_url'] for i in lib_images}
-        selected_keys = st.multiselect("Select Evidence (Order matters):", options=list(img_options.keys()))
-        duration = st.slider("Duration per Slide (Seconds)", 1.0, 5.0, 2.0)
-        if st.button("🎬 ACTION (RENDER VIDEO)", type="primary"):
-            if len(selected_keys) < 2:
-                st.warning("Please select at least 2 images.")
-            else:
-                selected_urls = [img_options[k] for k in selected_keys]
-                with st.spinner("Rendering Timeline..."):
-                    try:
-                        vid_path = create_reel_from_images(selected_urls, duration)
-                        st.success("Render Complete!")
-                        st.video(vid_path)
-                        with open(vid_path, "rb") as video_file:
-                            st.download_button("⬇️ Download Reel", video_file.read(), file_name="ghost_reel.mp4", mime="video/mp4")
-                    except Exception as e:
-                        st.error(f"Render Error: {e}. (Did you install moviepy?)")
-    else:
-        st.info("Library is empty. Upload evidence first.")
 
 # --- COMMAND CENTER ---
 st.markdown("---")
