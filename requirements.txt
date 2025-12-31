@@ -7,3 +7,5 @@ beautifulsoup4
 Pillow
 streamlit-cropper
 google-genai
+yt-dlp
+opencv-python-headless
