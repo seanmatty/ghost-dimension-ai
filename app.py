@@ -17,6 +17,9 @@ import cv2
 import yt_dlp
 import numpy as np
 import os
+import tempfile
+# MOVIEPY
+from moviepy.editor import ImageClip, concatenate_videoclips, CompositeVideoClip, ColorClip
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -27,7 +30,7 @@ st.markdown("""
 /* FORCE WHITE TEXT ON DISABLED INPUTS */
 .stTextArea textarea:disabled {
     color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important; /* Needed for Chrome/Safari */
+    -webkit-text-fill-color: #ffffff !important;
     opacity: 1 !important;
     background-color: #121212 !important;
     border: 1px solid #333 !important;
@@ -159,13 +162,23 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- NEW VIDEO PROCESSING FUNCTION ---
+# --- UPDATED VIDEO PROCESSING (SPEED MODE) ---
 def process_video_and_extract_frames(url, num_frames):
-    ydl_opts = {'format': 'best[ext=mp4]', 'outtmpl': 'temp_video.mp4', 'quiet': True}
+    # FORCE 480p or less to prevent crashing on large files
+    ydl_opts = {
+        'format': 'best[height<=480][ext=mp4]/best[ext=mp4]', 
+        'outtmpl': 'temp_video.mp4', 
+        'quiet': True,
+        'no_warnings': True
+    }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         
+        # Verify file exists before reading
+        if not os.path.exists('temp_video.mp4'):
+            return []
+
         cap = cv2.VideoCapture('temp_video.mp4')
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
@@ -179,7 +192,7 @@ def process_video_and_extract_frames(url, num_frames):
             cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = cap.read()
             if ret:
-                # Convert BGR (OpenCV standard) to RGB (PIL standard)
+                # Convert BGR to RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 extracted.append(Image.fromarray(rgb_frame))
         
@@ -188,15 +201,33 @@ def process_video_and_extract_frames(url, num_frames):
         return extracted
     except Exception as e:
         st.error(f"Video Scan Failed: {e}")
+        if os.path.exists('temp_video.mp4'): os.remove('temp_video.mp4')
         return []
+
+# --- REEL MAKER LOGIC ---
+def create_reel_from_images(image_urls, duration_per_slide):
+    clips = []
+    w, h = 1080, 1920
+    for url in image_urls:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as f:
+            f.write(requests.get(url).content)
+            temp_fname = f.name
+        img_clip = ImageClip(temp_fname).set_duration(duration_per_slide).resize(width=w)
+        bg = ColorClip(size=(w, h), color=(0,0,0), duration=duration_per_slide)
+        final_clip = CompositeVideoClip([bg, img_clip.set_position("center")])
+        clips.append(final_clip)
+    final_video = concatenate_videoclips(clips, method="compose")
+    output_path = "temp_reel.mp4"
+    final_video.write_videofile(output_path, fps=24, codec="libx264", audio=False)
+    return output_path
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>SOCIAL MANAGER</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
-# --- TABS (Updated with Video Scanner) ---
-tab_gen, tab_upload, tab_video = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "🎥 VIDEO SCANNER"])
+# --- TABS ---
+tab_gen, tab_upload, tab_video, tab_reel = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "🎥 VIDEO SCANNER", "🎞️ REEL MAKER"])
 
 with tab_gen:
     with st.container(border=True):
@@ -313,17 +344,14 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- NEW TAB: VIDEO SCANNER ---
+# --- TAB 3: VIDEO SCANNER (FIXED FOR SPEED) ---
 with tab_video:
     st.subheader("YouTube Frame Extraction")
-    
-    # 1. Controls
     if "extracted_frames" not in st.session_state: st.session_state.extracted_frames = []
     
     col_input, col_action = st.columns([3, 1])
     with col_input:
         yt_url = st.text_input("YouTube URL", placeholder="https://youtube.com/watch?v=...")
-        # "Select how many it makes"
         num_frames = st.slider("Frames to Extract", 5, 100, 10)
     
     with col_action:
@@ -331,17 +359,15 @@ with tab_video:
         st.write("") 
         if st.button("🚀 SCAN FOOTAGE", type="primary"):
             if yt_url:
-                with st.spinner("Scanning Frequency... Downloading Stream..."):
+                with st.spinner("Downloading (Speed Mode)..."):
                     st.session_state.extracted_frames = process_video_and_extract_frames(yt_url, num_frames)
             else: st.error("Need URL")
 
-    # 2. Results Grid
     if st.session_state.extracted_frames:
         st.divider()
         c_head, c_clear = st.columns([4, 1])
         with c_head: st.write("🔍 **Select Evidence to Process**")
         with c_clear:
-            # "Delete the ones we don't like" (Bulk Clear)
             if st.button("🗑️ CLEAR SCAN", type="primary"):
                 st.session_state.extracted_frames = []
                 st.rerun()
@@ -349,13 +375,10 @@ with tab_video:
         v_cols = st.columns(5)
         for i, frame in enumerate(st.session_state.extracted_frames):
             with v_cols[i % 5]:
-                # "See images"
                 st.image(frame, use_container_width=True)
-                # "Approve for library" flow starts here
                 if st.button("🔍 INSPECT", key=f"vid_{i}"):
                     st.session_state.selected_video_frame = frame
         
-        # 3. Crop & Save Modal
         if "selected_video_frame" in st.session_state:
             st.divider()
             st.subheader("✂️ Crop & Save Evidence")
@@ -364,7 +387,6 @@ with tab_video:
                 cropped_vid = st_cropper(st.session_state.selected_video_frame, aspect_ratio=(1,1), box_color='#00ff41', key="vid_cropper")
             with c_save:
                 st.info("Ready to Vault?")
-                # "Approve for library" final step
                 if st.button("✅ SAVE TO VAULT", key="save_vid_frame", type="primary"):
                     buf = io.BytesIO()
                     cropped_vid.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
@@ -372,6 +394,31 @@ with tab_video:
                     supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                     supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
                     st.success("Evidence Secured!"); st.rerun()
+
+# --- TAB 4: REEL MAKER ---
+with tab_reel:
+    st.subheader("🎞️ Construct Reel from Library")
+    lib_images = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
+    if lib_images:
+        img_options = {f"Image {i['id']} ({i['filename']})": i['file_url'] for i in lib_images}
+        selected_keys = st.multiselect("Select Evidence (Order matters):", options=list(img_options.keys()))
+        duration = st.slider("Duration per Slide (Seconds)", 1.0, 5.0, 2.0)
+        if st.button("🎬 ACTION (RENDER VIDEO)", type="primary"):
+            if len(selected_keys) < 2:
+                st.warning("Please select at least 2 images.")
+            else:
+                selected_urls = [img_options[k] for k in selected_keys]
+                with st.spinner("Rendering Timeline..."):
+                    try:
+                        vid_path = create_reel_from_images(selected_urls, duration)
+                        st.success("Render Complete!")
+                        st.video(vid_path)
+                        with open(vid_path, "rb") as video_file:
+                            st.download_button("⬇️ Download Reel", video_file.read(), file_name="ghost_reel.mp4", mime="video/mp4")
+                    except Exception as e:
+                        st.error(f"Render Error: {e}. (Did you install moviepy?)")
+    else:
+        st.info("Library is empty. Upload evidence first.")
 
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -393,7 +440,6 @@ with d1:
                         supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
-                        # Updated logic for VIDEO vs IMAGE flag
                         media_type = "video" if ".mp4" in p['image_url'] else "image"
                         requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap, "media_type": media_type})
                         supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute(); st.rerun()
