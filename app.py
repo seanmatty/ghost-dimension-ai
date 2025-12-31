@@ -190,6 +190,7 @@ st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if 
 # --- TABS ---
 tab_gen, tab_upload, tab_dropbox = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX SCANNER"])
 
+# --- TAB 1: NANO GENERATOR (BATCH MODE) ---
 with tab_gen:
     with st.container(border=True):
         c_head, c_body = st.columns([1, 2])
@@ -245,22 +246,29 @@ with tab_gen:
 
             c1, c2 = st.columns(2)
             with c1: style_choice = st.selectbox("Style", ["🟢 CCTV Night Vision", "🎞️ 35mm Found Footage", "📸 Victorian Spirit Photo", "❄️ Winter Frost Horror"])
-            with c2: post_count = st.slider("Quantity to Generate", 1, 5, 1)
+            with c2: post_count = st.slider("Quantity to Generate", 1, 10, 1)
             
             cap_style = st.selectbox("Strategy", STRATEGY_OPTIONS)
 
             if st.button("🚀 GENERATE DRAFTS", type="primary"):
-                with st.spinner(f"Manufacturing Ghost Dimension Content..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                for i in range(post_count):
                     try:
-                        for i in range(post_count):
-                            iter_topic = topic if (topic and post_count == 1) else generate_random_ghost_topic()
-                            caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": get_caption_prompt(cap_style, iter_topic, get_brand_knowledge())}]).choices[0].message.content
-                            img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=iter_topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
-                            url = save_ai_image_to_storage(img_resp.generated_images[0].image.image_bytes)
-                            if url: supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": iter_topic, "status": "draft"}).execute()
-                        st.session_state.enhanced_topic = ""; st.rerun()
-                    except Exception as e: st.error(e)
+                        status_text.write(f"👻 Summoning entity {i+1} of {post_count}...")
+                        iter_topic = topic if (topic and post_count == 1) else generate_random_ghost_topic()
+                        caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": get_caption_prompt(cap_style, iter_topic, get_brand_knowledge())}]).choices[0].message.content
+                        img_resp = google_client.models.generate_images(model='imagen-4.0-ultra-generate-001', prompt=iter_topic, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1", person_generation="ALLOW_ADULT"))
+                        url = save_ai_image_to_storage(img_resp.generated_images[0].image.image_bytes)
+                        if url: 
+                            supabase.table("social_posts").insert({"caption": caption, "image_url": url, "topic": iter_topic, "status": "draft"}).execute()
+                        progress_bar.progress((i + 1) / post_count)
+                    except Exception as e: st.error(f"Failed on image {i+1}: {e}")
+                status_text.success("Batch Complete!")
+                st.session_state.enhanced_topic = ""
+                if st.button("🔄 Refresh"): st.rerun()
 
+# --- TAB 2: UPLOAD IMAGE ---
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     with c_up:
@@ -305,68 +313,68 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: DROPBOX SCANNER (CROP MODE) ---
+# --- TAB 3: DROPBOX SCANNER (FOCUSED CROP MODE) ---
 with tab_dropbox:
     st.subheader("🎥 Remote Forensic Scanner")
     
-    # Initialize session state for selections
     if "db_frames" not in st.session_state: st.session_state.db_frames = []
-
-    db_url = st.text_input("Dropbox Video Link", placeholder="Paste share link here...")
-    num_to_grab = st.slider("How many frames to preview?", 10, 100, 20)
     
-    if st.button("🚀 SCAN VIDEO", type="primary"):
-        if db_url:
-            with st.spinner("Streaming video from Dropbox..."):
-                st.session_state.db_frames = extract_frames_from_url(db_url, num_to_grab)
-        else:
-            st.warning("Paste a link first.")
+    # 1. SCANNER INPUTS
+    if st.session_state.get("frame_to_crop") is None:
+        db_url = st.text_input("Dropbox Video Link", placeholder="Paste share link here...")
+        num_to_grab = st.slider("How many frames to preview?", 10, 100, 20)
+        
+        if st.button("🚀 SCAN VIDEO", type="primary"):
+            if db_url:
+                with st.spinner("Streaming video from Dropbox..."):
+                    st.session_state.db_frames = extract_frames_from_url(db_url, num_to_grab)
+            else:
+                st.warning("Paste a link first.")
 
-    # Show Frames
-    if st.session_state.db_frames:
-        st.divider()
-        c_head, c_act = st.columns([2, 1])
-        with c_head: st.write(f"🔍 Found {len(st.session_state.db_frames)} frames.")
-        with c_act:
-            if st.button("🗑️ CLEAR SCAN"):
-                st.session_state.db_frames = []
+        # 2. GRID DISPLAY
+        if st.session_state.db_frames:
+            st.divider()
+            c_head, c_act = st.columns([2, 1])
+            with c_head: st.write(f"🔍 Found {len(st.session_state.db_frames)} frames.")
+            with c_act:
+                if st.button("🗑️ CLEAR SCAN"):
+                    st.session_state.db_frames = []
+                    st.rerun()
+            
+            st.info("Click '✂️ CROP' on an image to prepare it for the library.")
+            
+            cols = st.columns(5)
+            for i, frame in enumerate(st.session_state.db_frames):
+                with cols[i % 5]:
+                    st.image(frame, use_container_width=True)
+                    if st.button("✂️ CROP", key=f"cr_{i}"):
+                        st.session_state.frame_to_crop = frame
+                        st.rerun()
+
+    # 3. CROPPER INTERFACE (Takes over screen)
+    else:
+        st.markdown("### ✂️ CROP EVIDENCE")
+        c_cr, c_info = st.columns([2, 1])
+        with c_cr:
+            cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="db_cropper")
+        with c_info:
+            st.info("Adjust the green box to square format.")
+            if st.button("✅ SAVE CROP TO LIBRARY", type="primary"):
+                buf = io.BytesIO()
+                cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
+                fname = f"db_crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
+                supabase.table("uploaded_images").insert({
+                    "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
+                    "filename": fname
+                }).execute()
+                st.success("Saved! Check 'UPLOAD IMAGE' tab.")
                 st.session_state.frame_to_crop = None
                 st.rerun()
-        
-        # If we have selected a frame to crop, show the CROPPER at the top
-        if "frame_to_crop" in st.session_state and st.session_state.frame_to_crop is not None:
-            st.markdown("### ✂️ CROP EVIDENCE")
-            c_cr, c_info = st.columns([2, 1])
-            with c_cr:
-                cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="db_cropper")
-            with c_info:
-                st.info("Adjust the green box to square format.")
-                if st.button("✅ SAVE CROP TO LIBRARY", type="primary"):
-                    buf = io.BytesIO()
-                    cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
-                    fname = f"db_crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                    supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                    supabase.table("uploaded_images").insert({
-                        "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
-                        "filename": fname
-                    }).execute()
-                    st.success("Saved! Check 'UPLOAD IMAGE' tab.")
-                    # Close cropper
-                    st.session_state.frame_to_crop = None
-                    st.rerun()
-                if st.button("❌ CANCEL CROP"):
-                    st.session_state.frame_to_crop = None
-                    st.rerun()
-            st.divider()
-
-        # Grid of Thumbnails
-        cols = st.columns(5)
-        for i, frame in enumerate(st.session_state.db_frames):
-            with cols[i % 5]:
-                st.image(frame, use_container_width=True)
-                if st.button("✂️ CROP", key=f"cr_{i}"):
-                    st.session_state.frame_to_crop = frame
-                    st.rerun()
+            
+            if st.button("❌ CANCEL CROP"):
+                st.session_state.frame_to_crop = None
+                st.rerun()
 
 # --- COMMAND CENTER ---
 st.markdown("---")
