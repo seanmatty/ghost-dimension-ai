@@ -9,4 +9,4 @@ streamlit-cropper
 google-genai
 yt-dlp
 opencv-python-headless
-moviepy
+moviepy==1.0.3
