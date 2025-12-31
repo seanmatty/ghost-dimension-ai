@@ -12,6 +12,9 @@ import urllib.parse
 from PIL import Image, ImageOps
 import io
 from streamlit_cropper import st_cropper 
+# --- NEW IMPORTS ---
+import cv2
+import numpy as np
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -22,7 +25,7 @@ st.markdown("""
 /* FORCE WHITE TEXT ON DISABLED INPUTS */
 .stTextArea textarea:disabled {
     color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important; /* Needed for Chrome/Safari */
+    -webkit-text-fill-color: #ffffff !important;
     opacity: 1 !important;
     background-color: #121212 !important;
     border: 1px solid #333 !important;
@@ -33,7 +36,7 @@ st.markdown("""
         font-family: 'Helvetica Neue', sans-serif;
         text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
     }
-    label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label {
+    label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label, .stSlider label {
         color: #ffffff !important;
         font-weight: 600 !important;
     }
@@ -78,6 +81,8 @@ st.markdown("""
         font-weight: bold !important;
     }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
+    /* Checkbox Styling */
+    .stCheckbox label { color: #00ff41 !important; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -152,15 +157,44 @@ def get_caption_prompt(style, topic, context):
         "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story that sounds like a Ghost Dimension teaser.",
         "😱 Pure Panic (Short & Scary)": "Short, terrified caption. 'We weren't alone in this episode...' Use ⚠️👻."
     }
-    # ADDED STRICT INSTRUCTION HERE
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
+
+# --- NEW: DROPBOX STREAMING LOGIC ---
+def extract_frames_from_url(video_url, num_frames):
+    # Fix Dropbox link to be a direct download link
+    if "dropbox.com" in video_url:
+        video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+    
+    try:
+        # Open video stream
+        cap = cv2.VideoCapture(video_url)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0: return []
+        
+        # Calculate indices
+        indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
+        frames = []
+        
+        # Extract specific frames (Streaming)
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(Image.fromarray(rgb_frame))
+        cap.release()
+        return frames
+    except Exception as e:
+        st.error(f"Scan Error: {e}")
+        return []
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>SOCIAL MANAGER</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
-tab_gen, tab_upload = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE"])
+# --- TABS ---
+tab_gen, tab_upload, tab_dropbox = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX SCANNER"])
 
 with tab_gen:
     with st.container(border=True):
@@ -261,7 +295,6 @@ with tab_upload:
                         st.image(img['file_url'], use_container_width=True)
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                # --- UPDATED STRICT PROMPT ---
                                 vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
                                 BRAND FACTS: {get_brand_knowledge()}
                                 TASK: Write a scary, promotional social media caption for this photo. 
@@ -277,6 +310,73 @@ with tab_upload:
                                 st.success("Draft Created!"); st.rerun()
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
+
+# --- TAB 3: DROPBOX SCANNER (BULK MODE) ---
+with tab_dropbox:
+    st.subheader("🎥 Bulk Frame Extraction")
+    
+    # Initialize session state for selections
+    if "db_frames" not in st.session_state: st.session_state.db_frames = []
+
+    db_url = st.text_input("Dropbox Video Link", placeholder="Paste share link here...")
+    num_to_grab = st.slider("How many frames to preview?", 10, 100, 20)
+    
+    if st.button("🚀 SCAN VIDEO", type="primary"):
+        if db_url:
+            with st.spinner("Streaming video from Dropbox..."):
+                st.session_state.db_frames = extract_frames_from_url(db_url, num_to_grab)
+        else:
+            st.warning("Paste a link first.")
+
+    if st.session_state.db_frames:
+        st.divider()
+        st.markdown("### 🕵️ Select Evidence")
+        
+        # We need a form or button to submit selections
+        # Since Streamlit checkboxes trigger reruns, we process the save by checking the state directly
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            if st.button("✅ SAVE SELECTED TO VAULT", type="primary"):
+                # Find which boxes were checked
+                selected_indices = []
+                for i in range(len(st.session_state.db_frames)):
+                    if st.session_state.get(f"chk_{i}", False):
+                        selected_indices.append(i)
+                
+                if not selected_indices:
+                    st.warning("No images selected.")
+                else:
+                    with st.spinner(f"Uploading {len(selected_indices)} images..."):
+                        for idx in selected_indices:
+                            img = st.session_state.db_frames[idx]
+                            buf = io.BytesIO()
+                            img.save(buf, format="JPEG", quality=85)
+                            fname = f"bulk_ev_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}.jpg"
+                            
+                            # Upload
+                            supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
+                            supabase.table("uploaded_images").insert({
+                                "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
+                                "filename": fname
+                            }).execute()
+                    st.success(f"Success! {len(selected_indices)} frames secured in the vault.")
+                    # Optional: Clear after save
+                    # st.session_state.db_frames = [] 
+                    # st.rerun()
+
+        with c2:
+            if st.button("🗑️ DISCARD ALL SCAN"):
+                st.session_state.db_frames = []
+                st.rerun()
+
+        # Grid View
+        cols = st.columns(4)
+        for i, frame in enumerate(st.session_state.db_frames):
+            with cols[i % 4]:
+                st.image(frame, use_container_width=True)
+                # Checkbox
+                st.checkbox(f"Select #{i+1}", key=f"chk_{i}")
 
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -334,4 +434,3 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
-
