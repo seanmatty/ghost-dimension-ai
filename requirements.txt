@@ -10,3 +10,4 @@ google-genai
 yt-dlp
 opencv-python-headless
 moviepy==1.0.3
+numpy
