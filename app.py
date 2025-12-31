@@ -158,21 +158,23 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- UPDATED VIDEO PROCESSING (V57: ANDROID DISGUISE) ---
+# --- UPDATED VIDEO PROCESSING (V58: BROADER FORMATS) ---
 def process_video_and_extract_frames(url, num_frames):
-    # USE ANDROID CLIENT TO BYPASS 403
+    # FALLBACK CHAIN:
+    # 1. Best Video Only under 720p (Ideal)
+    # 2. Best Video Only (Any size, if first fails)
+    # 3. Worst MP4 (Desperation mode)
     ydl_opts = {
-        'format': 'bestvideo[height<=480][ext=mp4]', 
+        'format': 'bestvideo[height<=720][ext=mp4]/bestvideo[ext=mp4]/worst[ext=mp4]', 
         'outtmpl': 'temp_video.mp4', 
         'quiet': True,
         'no_warnings': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}} # <--- THE DISGUISE
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         
-        # Verify file exists and has size
         if not os.path.exists('temp_video.mp4') or os.path.getsize('temp_video.mp4') == 0:
             return []
 
@@ -181,7 +183,6 @@ def process_video_and_extract_frames(url, num_frames):
         
         if total_frames == 0: return []
         
-        # Calculate even intervals
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
         extracted = []
         
@@ -189,7 +190,6 @@ def process_video_and_extract_frames(url, num_frames):
             cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = cap.read()
             if ret:
-                # Convert BGR to RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 extracted.append(Image.fromarray(rgb_frame))
         
@@ -324,7 +324,7 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: VIDEO SCANNER (V57 FIX) ---
+# --- TAB 3: VIDEO SCANNER (V58 FIX) ---
 with tab_video:
     st.subheader("YouTube Frame Extraction")
     if "extracted_frames" not in st.session_state: st.session_state.extracted_frames = []
@@ -339,7 +339,7 @@ with tab_video:
         st.write("") 
         if st.button("🚀 SCAN FOOTAGE", type="primary"):
             if yt_url:
-                with st.spinner("Downloading (Speed Mode)..."):
+                with st.spinner("Downloading (Flexible Mode)..."):
                     st.session_state.extracted_frames = process_video_and_extract_frames(yt_url, num_frames)
             else: st.error("Need URL")
 
