@@ -158,14 +158,15 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- UPDATED VIDEO PROCESSING (NO AUDIO) ---
+# --- UPDATED VIDEO PROCESSING (V57: ANDROID DISGUISE) ---
 def process_video_and_extract_frames(url, num_frames):
-    # FORCE NO AUDIO (This fixes the empty file error)
+    # USE ANDROID CLIENT TO BYPASS 403
     ydl_opts = {
-        'format': 'bestvideo[height<=480][ext=mp4]', # Video only, 480p max
+        'format': 'bestvideo[height<=480][ext=mp4]', 
         'outtmpl': 'temp_video.mp4', 
         'quiet': True,
-        'no_warnings': True
+        'no_warnings': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}} # <--- THE DISGUISE
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -196,7 +197,6 @@ def process_video_and_extract_frames(url, num_frames):
         if os.path.exists('temp_video.mp4'): os.remove('temp_video.mp4')
         return extracted
     except Exception as e:
-        # Check if file exists to delete it even on error
         if os.path.exists('temp_video.mp4'): os.remove('temp_video.mp4')
         st.error(f"Video Scan Failed: {e}")
         return []
@@ -324,7 +324,7 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: VIDEO SCANNER (SPEED MODE) ---
+# --- TAB 3: VIDEO SCANNER (V57 FIX) ---
 with tab_video:
     st.subheader("YouTube Frame Extraction")
     if "extracted_frames" not in st.session_state: st.session_state.extracted_frames = []
