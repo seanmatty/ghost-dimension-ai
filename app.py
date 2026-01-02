@@ -509,7 +509,7 @@ with tab_video_vault:
 
 # --- COMMAND CENTER ---
 st.markdown("---")
-st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h2>", unsafe_allow_html=True)
 d1, d2, d3 = st.tabs(["📝 DRAFTS", "📅 SCHEDULED", "📜 HISTORY"])
 
 with d1:
@@ -533,9 +533,38 @@ with d1:
                         supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
+                        # 1. DETERMINE TYPE
                         media_type = "video" if ".mp4" in p['image_url'] else "image"
-                        requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap, "media_type": media_type})
-                        supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute(); st.rerun()
+                        
+                        # 2. PRINT DEBUG INFO TO SCREEN
+                        st.warning(f"📡 Preparing to send data...")
+                        st.write(f"**Target URL:** `{MAKE_WEBHOOK_URL}`")
+                        st.write(f"**Payload:** Type={media_type} | Link={p['image_url'][:30]}...")
+                        
+                        try:
+                            # 3. SEND REQUEST
+                            response = requests.post(
+                                MAKE_WEBHOOK_URL, 
+                                json={"image_url": p['image_url'], "caption": cap, "media_type": media_type},
+                                timeout=10
+                            )
+                            
+                            # 4. REPORT RESULT
+                            if response.status_code == 200:
+                                st.success(f"✅ SUCCESS! Make.com accepted it (200 OK).")
+                                st.write(f"Server response: {response.text}")
+                                # Only update DB if successful
+                                supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute()
+                                st.balloons()
+                            else:
+                                st.error(f"❌ FAILURE. Make.com rejected it.")
+                                st.error(f"Status Code: {response.status_code}")
+                                st.error(f"Response: {response.text}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ CRITICAL ERROR: Could not connect to internet/Make.")
+                            st.code(e)
+                            
                 with b_col3:
                     if st.button("🗑️", key=f"del_{p['id']}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
@@ -574,3 +603,4 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
