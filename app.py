@@ -15,6 +15,8 @@ from streamlit_cropper import st_cropper
 import cv2
 import numpy as np
 import os
+import subprocess
+import tempfile
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -22,65 +24,18 @@ st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wi
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
-/* FORCE WHITE TEXT ON DISABLED INPUTS */
-.stTextArea textarea:disabled {
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
-    opacity: 1 !important;
-    background-color: #121212 !important;
-    border: 1px solid #333 !important;
-}
     .stApp { background-color: #050505; color: #e0e0e0; }
-    h1, h2, h3 {
-        color: #00ff41 !important; 
-        font-family: 'Helvetica Neue', sans-serif;
-        text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
-    }
-    label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label, .stSlider label {
-        color: #ffffff !important;
-        font-weight: 600 !important;
-    }
-    .stExpander {
-        background-color: #121212 !important;
-        border: 1px solid #333 !important;
-        border-radius: 12px !important;
-    }
-    .stExpander [data-testid="stExpanderHeader"], 
-    .stExpander [data-testid="stExpanderHeader"] p,
-    .stExpander [data-testid="stExpanderHeader"] span {
-        color: #00ff41 !important;
-        background-color: #121212 !important;
-        font-weight: bold !important;
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        padding: 25px !important; 
-        background-color: #121212;
-        border-radius: 12px;
-        margin-bottom: 20px;
-        border: 1px solid #333; 
-    }
-    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
-        background-color: #1c1c1c !important; color: white !important; border: 1px solid #333 !important; border-radius: 8px;
-    }
+    h1, h2, h3 { color: #00ff41 !important; text-shadow: 0 0 10px rgba(0, 255, 65, 0.3); }
     .stButton > button {
-        background-color: #1c1c1c !important; 
-        color: #00ff41 !important; 
-        border: 1px solid #00ff41 !important; 
-        border-radius: 8px; 
-        font-weight: 500;
-        width: 100%;
+        background-color: #1c1c1c !important; color: #00ff41 !important; border: 1px solid #00ff41 !important; border-radius: 8px; width: 100%;
     }
-    .stButton > button:hover {
-        background-color: #00ff41 !important; 
-        color: #000000 !important; 
-    }
-    button[kind="primary"] {
-        background-color: #00ff41 !important; 
-        color: black !important; 
-        border: none !important; 
-        font-weight: bold !important;
-    }
+    .stButton > button:hover { background-color: #00ff41 !important; color: #000000 !important; }
+    button[kind="primary"] { background-color: #00ff41 !important; color: black !important; font-weight: bold !important; }
+    .stCheckbox label { color: #00ff41 !important; font-weight: bold; }
+    div[data-testid="stExpander"] { border: 1px solid #00ff41; }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
+    /* Force white text on inputs */
+    .stTextArea textarea:disabled { color: white !important; -webkit-text-fill-color: white !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,10 +47,7 @@ def check_password():
             del st.session_state["password"]
         else: st.session_state["password_correct"] = False
     if st.session_state.get("password_correct", False): return True
-    st.markdown("<h1 style='text-align: center;'>👻 ACCESS RESTRICTED</h1>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1,1,1])
-    with c2:
-        st.text_input("Enter Clearance Code", type="password", on_change=password_entered, key="password")
+    st.text_input("Enter Clearance Code", type="password", on_change=password_entered, key="password")
     return False
 
 if not check_password(): st.stop()
@@ -157,7 +109,60 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- DROPBOX STREAMING LOGIC ---
+# --- VIDEO PROCESSING ENGINE (FFMPEG) ---
+def process_reel(video_url, start_time_sec, duration, effect, output_filename):
+    if "dropbox.com" in video_url:
+        video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+
+    # BASE: Crop to 9:16 (Vertical) -> Scale to 1080x1920
+    base = "crop=ih*(9/16):ih:iw/2-ow/2:0,scale=1080:1920"
+    
+    # EFFECT LIBRARY (20+ Effects)
+    fx_map = {
+        "None": "",
+        "🟢 CCTV (Green)": ",curves=all='0/0 0.5/0.5 1/1':g='0/0 0.5/0.8 1/1',noise=alls=20:allf=t+u",
+        "🔵 Ectoplasm (Blue NV)": ",curves=all='0/0 0.5/0.5 1/1':b='0/0 0.5/0.8 1/1',noise=alls=10:allf=t+u",
+        "🔴 Demon Mode": ",colorbalance=rs=0.5:gs=-0.5:bs=-0.5,vignette",
+        "⚫ Noir (B&W)": ",hue=s=0,curves=strong_contrast,noise=alls=10:allf=t+u",
+        "🏚️ Old VHS": ",curves=vintage,noise=alls=15:allf=t+u,vignette",
+        "⚡ Poltergeist (Static)": ",noise=alls=40:allf=t+u",
+        "📜 Sepia (1920s)": ",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131",
+        "📸 Negative (Invert)": ",negate",
+        "🪞 Mirror World": ",hflip",
+        "🖍️ Edge Detect": ",edgedetect=low=0.1:high=0.4",
+        "🔥 Deep Fried": ",eq=contrast=2:saturation=2",
+        "👻 Ghostly Blur": ",boxblur=10:1",
+        "🔦 Spotlight": ",vignette=PI/4",
+        "🔮 Purple Haze": ",colorbalance=rs=0.2:gs=-0.2:bs=0.4",
+        "🧊 Frozen": ",colorbalance=rs=-0.2:gs=0.2:bs=0.6",
+        "🩸 Blood Bath": ",colorbalance=rs=0.8:gs=-0.5:bs=-0.5",
+        "🌚 Midnight": ",eq=brightness=-0.2:contrast=1.2",
+        "📻 Radio Tower": ",hue=s=0,noise=alls=30:allf=t+u",
+        "👽 Alien": ",colorbalance=rs=-0.1:gs=0.4:bs=0.1,noise=alls=10:allf=t+u"
+    }
+
+    selected_filter = fx_map.get(effect, "")
+    final_filter = f"{base}{selected_filter}"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time_sec),
+        "-t", str(duration),
+        "-i", video_url,
+        "-vf", final_filter,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac",
+        output_filename
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError as e:
+        st.error(f"FFmpeg Error: {e}")
+        return False
+
+# --- DROPBOX SCANNER LOGIC ---
 def extract_frames_from_url(video_url, num_frames):
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
@@ -165,10 +170,13 @@ def extract_frames_from_url(video_url, num_frames):
     try:
         cap = cv2.VideoCapture(video_url)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0: return []
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        
+        if total_frames <= 0: return [], 0
         
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
         frames = []
+        timestamps = []
         
         for idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -176,21 +184,22 @@ def extract_frames_from_url(video_url, num_frames):
             if ret:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frames.append(Image.fromarray(rgb_frame))
+                timestamps.append(idx / fps if fps > 0 else 0)
         cap.release()
-        return frames
+        return frames, timestamps
     except Exception as e:
         st.error(f"Scan Error: {e}")
-        return []
+        return [], 0
 
 # --- MAIN TITLE ---
 total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
-st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>SOCIAL MANAGER</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # --- TABS ---
-tab_gen, tab_upload, tab_dropbox = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX SCANNER"])
+tab_gen, tab_upload, tab_dropbox, tab_video_vault = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT"])
 
-# --- TAB 1: NANO GENERATOR (BATCH MODE) ---
+# --- TAB 1: NANO GENERATOR ---
 with tab_gen:
     with st.container(border=True):
         c_head, c_body = st.columns([1, 2])
@@ -282,7 +291,7 @@ with tab_upload:
                 buf = io.BytesIO(); cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
                 fname = f"ev_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                 supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname}).execute()
+                supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
                 st.success("Saved!"); st.rerun()
     
     with c_lib:
@@ -313,36 +322,47 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: DROPBOX SCANNER (FOCUSED CROP MODE) ---
+# --- TAB 3: DROPBOX LAB (MERGED) ---
 with tab_dropbox:
-    st.subheader("🎥 Remote Forensic Scanner")
+    st.subheader("🎥 Source Material Processor")
+    
+    # 1. SETUP & SCAN
+    mode = st.radio("Select Output Format:", ["📸 Photo Extraction (Square Crop)", "🎬 Reel Production (9:16 Video)"], horizontal=True)
+    db_url = st.text_input("Dropbox Video Link", placeholder="Paste share link here...")
+    snap_count = st.slider("Snapshot Density (Frames to scan)", 10, 60, 20)
     
     if "db_frames" not in st.session_state: st.session_state.db_frames = []
-    
-    # 1. SCANNER INPUTS
-    if st.session_state.get("frame_to_crop") is None:
-        db_url = st.text_input("Dropbox Video Link", placeholder="Paste share link here...")
-        num_to_grab = st.slider("How many frames to preview?", 10, 100, 20)
-        
-        if st.button("🚀 SCAN VIDEO", type="primary"):
-            if db_url:
-                with st.spinner("Streaming video from Dropbox..."):
-                    st.session_state.db_frames = extract_frames_from_url(db_url, num_to_grab)
-            else:
-                st.warning("Paste a link first.")
+    if "db_timestamps" not in st.session_state: st.session_state.db_timestamps = []
 
-        # 2. GRID DISPLAY
-        if st.session_state.db_frames:
+    if st.button("🚀 SCAN SOURCE", type="primary"):
+        if db_url:
+            with st.spinner("Accessing Remote Feed..."):
+                frames, timestamps = extract_frames_from_url(db_url, snap_count)
+                st.session_state.db_frames = frames
+                st.session_state.db_timestamps = timestamps
+                if "preview_reel_path" in st.session_state: del st.session_state.preview_reel_path
+        else: st.warning("Need link.")
+
+    # 2. LANE A: PHOTO MODE (Image Cropper)
+    if mode.startswith("📸") and st.session_state.db_frames:
+        if st.session_state.get("frame_to_crop"):
+            # SHOW CROPPER (HIDE GRID)
+            st.markdown("---"); st.markdown("### ✂️ CROPPER")
+            c1, c2 = st.columns([2, 1])
+            with c1: cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="ph_crop")
+            with c2:
+                if st.button("💾 SAVE TO IMG VAULT", type="primary"):
+                    buf = io.BytesIO(); cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
+                    fname = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                    supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
+                    supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
+                    st.success("Saved!"); st.session_state.frame_to_crop = None; st.rerun()
+                if st.button("❌ CANCEL"):
+                    st.session_state.frame_to_crop = None; st.rerun()
+        else:
+            # SHOW GRID
             st.divider()
-            c_head, c_act = st.columns([2, 1])
-            with c_head: st.write(f"🔍 Found {len(st.session_state.db_frames)} frames.")
-            with c_act:
-                if st.button("🗑️ CLEAR SCAN"):
-                    st.session_state.db_frames = []
-                    st.rerun()
-            
-            st.info("Click '✂️ CROP' on an image to prepare it for the library.")
-            
+            st.write("📸 **Select a frame to crop:**")
             cols = st.columns(5)
             for i, frame in enumerate(st.session_state.db_frames):
                 with cols[i % 5]:
@@ -351,30 +371,72 @@ with tab_dropbox:
                         st.session_state.frame_to_crop = frame
                         st.rerun()
 
-    # 3. CROPPER INTERFACE (Takes over screen)
+    # 3. LANE B: REEL MODE (Video Studio)
+    elif mode.startswith("🎬") and st.session_state.db_frames:
+        st.divider()
+        EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
+        
+        c_eff, c_dur = st.columns(2)
+        with c_eff: effect_choice = st.selectbox("Apply Spooky Filter:", EFFECTS_LIST)
+        with c_dur: clip_dur = st.slider("Clip Duration (Seconds)", 5, 60, 15)
+
+        # PREVIEW PLAYER
+        if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
+            st.markdown("### 🎬 DIRECTOR'S MONITOR")
+            c_vid, c_act = st.columns([1, 1])
+            with c_vid: st.video(st.session_state.preview_reel_path)
+            with c_act:
+                if st.button("✅ APPROVE & VAULT", type="primary"):
+                    with st.spinner("Vaulting Evidence..."):
+                        with open(st.session_state.preview_reel_path, "rb") as f:
+                            fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                            supabase.storage.from_("uploads").upload(fn, f, {"content-type": "video/mp4"})
+                            url = supabase.storage.from_("uploads").get_public_url(fn)
+                            supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
+                        st.success("Reel Secured in 'VIDEO VAULT'!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
+                if st.button("❌ DISCARD PREVIEW"):
+                    os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
+            st.divider()
+
+        # SELECTION GRID
+        st.write("🎬 **Click '▶️ PREVIEW' to render a test clip:**")
+        cols = st.columns(5)
+        for i, frame in enumerate(st.session_state.db_frames):
+            with cols[i % 5]:
+                st.image(frame, use_container_width=True)
+                ts = st.session_state.db_timestamps[i]
+                start_fmt = f"{int(ts // 60)}:{int(ts % 60):02d}"
+                st.caption(f"Start: {start_fmt}")
+                if st.button(f"▶️ PREVIEW", key=f"prev_{i}"):
+                    temp_name = "temp_preview_reel.mp4"
+                    with st.spinner(f"Rendering {clip_dur}s Preview ({start_fmt})..."):
+                        if process_reel(db_url, ts, clip_dur, effect_choice, temp_name):
+                            st.session_state.preview_reel_path = temp_name; st.rerun()
+
+# --- TAB 4: VIDEO VAULT ---
+with tab_video_vault:
+    st.subheader("📼 Video Reel Library")
+    videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).execute().data
+    
+    if videos:
+        cols = st.columns(3)
+        for idx, vid in enumerate(videos):
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    st.video(vid['file_url'])
+                    st.caption(f"📄 {vid['filename']}")
+                    c_draft, c_del = st.columns(2)
+                    with c_draft:
+                        if st.button("✨ CAPTION", key=f"vcap_{vid['id']}"):
+                            prompt = "Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
+                            cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                            supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": "Reel", "status": "draft"}).execute()
+                            st.success("Draft Created! Check 'Command Center'.")
+                    with c_del:
+                        if st.button("🗑️", key=f"vdel_{vid['id']}"):
+                            supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
-        st.markdown("### ✂️ CROP EVIDENCE")
-        c_cr, c_info = st.columns([2, 1])
-        with c_cr:
-            cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="db_cropper")
-        with c_info:
-            st.info("Adjust the green box to square format.")
-            if st.button("✅ SAVE CROP TO LIBRARY", type="primary"):
-                buf = io.BytesIO()
-                cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
-                fname = f"db_crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                supabase.table("uploaded_images").insert({
-                    "file_url": supabase.storage.from_("uploads").get_public_url(fname), 
-                    "filename": fname
-                }).execute()
-                st.success("Saved! Check 'UPLOAD IMAGE' tab.")
-                st.session_state.frame_to_crop = None
-                st.rerun()
-            
-            if st.button("❌ CANCEL CROP"):
-                st.session_state.frame_to_crop = None
-                st.rerun()
+        st.info("Vault empty. Render some Reels in the Dropbox Lab!")
 
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -386,17 +448,24 @@ with d1:
     for p in drafts:
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
-            with col1: st.image(p['image_url'], use_column_width=True)
+            with col1: 
+                if ".mp4" in p['image_url']: 
+                    st.video(p['image_url'])
+                    st.caption("🎥 VIDEO REEL")
+                else: 
+                    st.image(p['image_url'], use_column_width=True)
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
                 din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
+                
                 b_col1, b_col2, b_col3 = st.columns(3)
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}"):
                         supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
-                        requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap})
+                        media_type = "video" if ".mp4" in p['image_url'] else "image"
+                        requests.post(MAKE_WEBHOOK_URL, json={"image_url": p['image_url'], "caption": cap, "media_type": media_type})
                         supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute(); st.rerun()
                 with b_col3:
                     if st.button("🗑️", key=f"del_{p['id']}"):
@@ -407,7 +476,9 @@ with d2:
     for p in sch:
         with st.container(border=True):
             ci, ct = st.columns([1, 3])
-            with ci: st.image(p['image_url'], use_column_width=True)
+            with ci: 
+                if ".mp4" in p['image_url']: st.video(p['image_url'])
+                else: st.image(p['image_url'], use_column_width=True)
             with ct:
                 st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
                 st.text_area("Scheduled Caption", p['caption'], height=100, disabled=True, key=f"view_{p['id']}")
@@ -419,16 +490,7 @@ with d3:
     for p in hist:
         with st.container(border=True):
             ci, ct = st.columns([1, 3])
-            with ci: st.image(p['image_url'], use_column_width=True)
+            with ci: 
+                 if ".mp4" in p['image_url']: st.video(p['image_url'])
+                 else: st.image(p['image_url'], use_column_width=True)
             with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
-
-st.markdown("---")
-with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
-    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
-    old_data = supabase.table("social_posts").select("id, image_url").eq("status", "posted").lt("created_at", sixty_days_ago).execute().data
-    st.write(f"📂 **Overdue for Purge:** {len(old_data)} files")
-    if len(old_data) > 0:
-        if st.button("🔥 INCINERATE OLD EVIDENCE"):
-            supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
-            supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
-    else: st.button("✅ VAULT IS CURRENT", disabled=True)
