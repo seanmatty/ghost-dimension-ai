@@ -435,7 +435,7 @@ with tab_dropbox:
                         with st.spinner("Rendering..."):
                             if process_reel(db_url, ts, clip_dur, effect_choice, temp_name): st.session_state.preview_reel_path = temp_name; st.rerun()
 
-    # B. PRECISION CUTTER (TIMELINE MODE)
+    # B. PRECISION CUTTER
     elif tool_mode.startswith("⏱️"):
         st.info("Step 1: Watch to find the time. Step 2: Drag slider to that time.")
         
@@ -454,23 +454,8 @@ with tab_dropbox:
             st.divider()
             st.write("✂️ **Cut Settings**")
             
-            # --- NEW: MM:SS TIMELINE SLIDER ---
-            # Create a fake "base date" (e.g., year 2000) so we can use time objects
-            base_date = datetime(2000, 1, 1, 0, 0, 0)
-            # Add the video duration to it to get the max slider value
-            end_date = base_date + timedelta(seconds=st.session_state.vid_duration if st.session_state.vid_duration > 0 else 60)
-            
-            # The slider now returns a full datetime object, but displays as MM:SS
-            sel_dt = st.slider(
-                "Select Start Time (Scrub to cut point)", 
-                min_value=base_date, 
-                max_value=end_date, 
-                value=base_date, 
-                format="mm:ss" 
-            )
-            
-            # Calculate the seconds difference from the base date
-            start_ts = int((sel_dt - base_date).total_seconds())
+            start_ts = st.slider("Select Start Time (Scrub to cut point)", 0, st.session_state.vid_duration, 0, format="%d s")
+            st.caption(f"Selected Start: {int(start_ts // 60)}m {int(start_ts % 60)}s")
             
             c_dur, c_eff = st.columns(2)
             with c_dur:
@@ -481,7 +466,7 @@ with tab_dropbox:
 
             if st.button("🎬 RENDER PRECISION CLIP", type="primary"):
                 temp_name = "temp_precision_reel.mp4"
-                with st.spinner(f"Slicing at {start_ts}s ({int(start_ts // 60)}:{int(start_ts % 60):02d})..."):
+                with st.spinner(f"Slicing at {start_ts}s..."):
                     if process_reel(db_url, start_ts, man_dur, man_effect, temp_name):
                         st.session_state.preview_reel_path = temp_name; st.rerun()
 
@@ -621,3 +606,6 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
+
+
