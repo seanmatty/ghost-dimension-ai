@@ -54,15 +54,60 @@ if not check_password(): st.stop()
 
 # 2. SETUP
 openai_client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
+google_client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
-# --- UTILS ---
+# --- GLOBAL OPTIONS ---
+STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
+
+# --- HELPER FUNCTIONS ---
 def get_best_time_for_day(target_date):
-    return time(20, 0) 
+    day_name = target_date.strftime("%A")
+    response = supabase.table("strategy").select("best_hour").eq("day", day_name).execute()
+    return time(response.data[0]['best_hour'], 0) if response.data else time(20, 0)
+
+def scrape_website(url):
+    if not url.startswith("http"): url = "https://" + url
+    try:
+        page = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if page.status_code == 200:
+            soup = BeautifulSoup(page.content, "html.parser")
+            return ' '.join([p.text for p in soup.find_all('p')])[:6000]
+    except: return None
+
+def get_brand_knowledge():
+    response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
+    return "\n".join([f"- {i['fact_summary']}" for i in response.data]) if response.data else ""
+
+def save_ai_image_to_storage(image_bytes):
+    try:
+        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+        supabase.storage.from_("uploads").upload(filename, image_bytes, {"content-type": "image/png"})
+        return supabase.storage.from_("uploads").get_public_url(filename)
+    except Exception as e:
+        st.error(f"Save failed: {e}"); return None
+
+def generate_random_ghost_topic():
+    knowledge = get_brand_knowledge()
+    prompt = f"Brainstorm a single paranormal subject for a photography prompt. Context: {knowledge if knowledge else 'British hauntings'}. Result must be one sentence, max 20 words."
+    resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
+    return resp.choices[0].message.content
+
+def enhance_topic(topic, style):
+    prompt = f"Rewrite for Imagen 4 Ultra. Topic: {topic}. Style: {style}. Instructions: Gear: CCTV, 35mm, or Daguerreotype. Realistic artifacts only. Max 50 words."
+    resp = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
+    return resp.choices[0].message.content
 
 def get_caption_prompt(style, topic, context):
-    return f"Write a {style} caption about {topic} for Ghost Dimension. Context: {context}. No headers."
+    strategies = {
+        "🎲 AI Choice (Promotional)": "Act as the Official Voice of Ghost Dimension. Link this scene to the show and tell people to head to our channel for the full investigation.",
+        "🔥 Viral / Debate (Ask Questions)": "Write a short, debating caption. Ask 'Real or Fake?'. Tag @GhostDimension.",
+        "🕵️ Investigator (Analyze Detail)": "Focus on a background anomaly. Tell them to watch the latest Ghost Dimension episode to see how we track this energy.",
+        "📖 Storyteller (Creepypasta)": "Write a 3-sentence horror story that sounds like a Ghost Dimension teaser.",
+        "😱 Pure Panic (Short & Scary)": "Short, terrified caption. 'We weren't alone in this episode...' Use ⚠️👻."
+    }
+    return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
 # --- VIDEO PROCESSING ENGINE (FFMPEG) ---
 def process_reel(video_url, start_time_sec, duration, effect, output_filename):
@@ -160,7 +205,9 @@ def extract_frames_from_url(video_url, num_frames):
         return [], 0
 
 # --- MAIN TITLE ---
-st.markdown(f"<h1 style='text-align: center;'>👻 GHOST DIMENSION <span style='color: #00ff41;'>STUDIO</span></h1>", unsafe_allow_html=True)
+total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
+st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # --- TABS ---
 tab_gen, tab_upload, tab_dropbox, tab_video_vault = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT"])
@@ -288,7 +335,7 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: DROPBOX LAB (UPDATED) ---
+# --- TAB 3: DROPBOX LAB (MERGED & UPGRADED) ---
 with tab_dropbox:
     st.subheader("🎥 Source Material Processor")
     
@@ -372,7 +419,6 @@ with tab_dropbox:
     elif tool_mode.startswith("⏱️"):
         st.info("Step 1: Watch to find the time. Step 2: Drag slider to that time.")
         
-        # Initialize video duration
         if "vid_duration" not in st.session_state: st.session_state.vid_duration = 0
         if "display_url" not in st.session_state: st.session_state.display_url = ""
 
@@ -388,7 +434,6 @@ with tab_dropbox:
             st.divider()
             st.write("✂️ **Cut Settings**")
             
-            # THE INTERACTIVE SCRUBBER
             start_ts = st.slider("Select Start Time (Scrub to cut point)", 0, st.session_state.vid_duration, 0, format="%d s")
             st.caption(f"Selected Start: {int(start_ts // 60)}m {int(start_ts % 60)}s")
             
@@ -405,7 +450,6 @@ with tab_dropbox:
                     if process_reel(db_url, start_ts, man_dur, man_effect, temp_name):
                         st.session_state.preview_reel_path = temp_name; st.rerun()
 
-        # REUSE PREVIEW LOGIC
         if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
             st.markdown("### 🎬 MONITOR")
             c_vid, c_act = st.columns([1, 1])
@@ -502,3 +546,14 @@ with d3:
                  if ".mp4" in p['image_url']: st.video(p['image_url'])
                  else: st.image(p['image_url'], use_column_width=True)
             with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
+
+st.markdown("---")
+with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
+    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+    old_data = supabase.table("social_posts").select("id, image_url").eq("status", "posted").lt("created_at", sixty_days_ago).execute().data
+    st.write(f"📂 **Overdue for Purge:** {len(old_data)} files")
+    if len(old_data) > 0:
+        if st.button("🔥 INCINERATE OLD EVIDENCE"):
+            supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
+            supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
+    else: st.button("✅ VAULT IS CURRENT", disabled=True)
