@@ -109,7 +109,7 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- VIDEO PROCESSING ENGINE (FFMPEG) ---
+# --- VIDEO PROCESSING ENGINE (V74 SAFE RENDER) ---
 def process_reel(video_url, start_time_sec, duration, effect, output_filename):
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
@@ -150,21 +150,24 @@ def process_reel(video_url, start_time_sec, duration, effect, output_filename):
         "-t", str(duration),
         "-i", video_url,
         "-vf", final_filter,
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:v", "libx264", 
+        "-preset", "ultrafast", 
+        "-crf", "28",
+        "-pix_fmt", "yuv420p", # FORCE COMPATIBILITY
         "-c:a", "aac",
         output_filename
     ]
     
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return True
     except subprocess.CalledProcessError as e:
-        st.error(f"FFmpeg Error: {e}")
+        err_msg = e.stderr.decode() if e.stderr else str(e)
+        st.error(f"Render Failed. FFmpeg Error: {err_msg}")
         return False
 
 # --- DROPBOX HELPERS ---
 def get_video_duration(video_url):
-    """Quickly fetches video length without downloading."""
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
     try:
@@ -173,7 +176,7 @@ def get_video_duration(video_url):
         frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
         cap.release()
         if fps > 0: return int(frames / fps)
-        return 600 # Default fallback
+        return 600
     except: return 600
 
 def extract_frames_from_url(video_url, num_frames):
@@ -184,7 +187,6 @@ def extract_frames_from_url(video_url, num_frames):
         cap = cv2.VideoCapture(video_url)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
-        
         if total_frames <= 0: return [], 0
         
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
@@ -335,7 +337,7 @@ with tab_upload:
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
-# --- TAB 3: DROPBOX LAB (MERGED & UPGRADED) ---
+# --- TAB 3: DROPBOX LAB ---
 with tab_dropbox:
     st.subheader("🎥 Source Material Processor")
     
@@ -373,9 +375,17 @@ with tab_dropbox:
                         supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
                         supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
                         st.success("Saved!"); st.session_state.frame_to_crop = None; st.rerun()
-                    if st.button("❌ CANCEL"): st.session_state.frame_to_crop = None; st.rerun()
+                    if st.button("❌ CANCEL CROP"): st.session_state.frame_to_crop = None; st.rerun()
             else:
-                st.divider(); cols = st.columns(5)
+                st.divider()
+                # HEADER WITH CLEAR BUTTON
+                c_head, c_clear = st.columns([3, 1])
+                with c_head: st.write("📸 **Select a frame to crop:**")
+                with c_clear:
+                    if st.button("🗑️ DISCARD SCAN", key="clr_ph"):
+                        st.session_state.db_frames = []; st.rerun()
+                
+                cols = st.columns(5)
                 for i, frame in enumerate(st.session_state.db_frames):
                     with cols[i % 5]:
                         st.image(frame, use_container_width=True)
@@ -401,9 +411,16 @@ with tab_dropbox:
                             url = supabase.storage.from_("uploads").get_public_url(fn)
                             supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
                         st.success("Vaulted!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-                    if st.button("❌ DISCARD"):
+                    if st.button("❌ DISCARD PREVIEW"):
                         os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
                 st.divider()
+
+            # HEADER WITH CLEAR BUTTON
+            c_head, c_clear = st.columns([3, 1])
+            with c_head: st.write("🎬 **Click '▶️ PREVIEW' to render a test clip:**")
+            with c_clear:
+                if st.button("🗑️ DISCARD SCAN", key="clr_rl"):
+                    st.session_state.db_frames = []; st.rerun()
 
             cols = st.columns(5)
             for i, frame in enumerate(st.session_state.db_frames):
@@ -462,7 +479,7 @@ with tab_dropbox:
                         url = supabase.storage.from_("uploads").get_public_url(fn)
                         supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
                     st.success("Vaulted!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-                if st.button("❌ DISCARD", key="man_del"):
+                if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
 
 # --- TAB 4: VIDEO VAULT ---
