@@ -35,7 +35,10 @@ st.markdown("""
     div[data-testid="stExpander"] { border: 1px solid #00ff41; }
     .stTabs [aria-selected="true"] { background-color: #00ff41 !important; color: black !important; }
     /* Force white text on inputs */
-    .stTextArea textarea:disabled { color: white !important; -webkit-text-fill-color: white !important; }
+    .stTextArea textarea:disabled {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -603,4 +606,5 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
