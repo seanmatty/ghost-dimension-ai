@@ -557,7 +557,9 @@ with d1:
                 din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
                 
                 b_col1, b_col2, b_col3 = st.columns(3)
-              with b_col1:
+                
+                # --- FIXED INDENTATION HERE ---
+                with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}"):
                         # 1. Update the Post Status
                         supabase.table("social_posts").update({
@@ -576,6 +578,7 @@ with d1:
                             print(f"Update failed: {e}")
 
                         st.rerun()
+                
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
                         # 1. DETERMINE TYPE
@@ -648,6 +651,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
