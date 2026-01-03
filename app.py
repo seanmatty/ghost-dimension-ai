@@ -312,8 +312,9 @@ with tab_upload:
                 supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
                 st.success("Saved!"); st.rerun()
     
-    with c_lib:
+   with c_lib:
         st.subheader("2. Library (All)")
+        # We fetch the new 'last_used_at' column here automatically
         lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
         
         if lib:
@@ -321,7 +322,32 @@ with tab_upload:
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
+                        # --- 🚦 TRAFFIC LIGHT LOGIC ---
+                        last_used_str = img.get('last_used_at')
+                        status_icon = "🟢" # Default: Safe/Green
+                        status_msg = "Fresh"
+                        
+                        if last_used_str:
+                            try:
+                                # Calculate days since last use
+                                last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
+                                days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
+                                
+                                # If used in last 30 days -> RED
+                                if days_ago < 30: 
+                                    status_icon = "🔴"
+                                    status_msg = f"{days_ago}d ago"
+                                else:
+                                    status_icon = "🟢"
+                                    status_msg = f"{days_ago}d ago"
+                            except:
+                                status_msg = "Unknown"
+
+                        # Show Image & Light
                         st.image(img['file_url'], use_container_width=True)
+                        st.markdown(f"**{status_icon} {status_msg}**")
+                        # -----------------------------
+
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
                                 vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
@@ -531,9 +557,25 @@ with d1:
                 din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
                 
                 b_col1, b_col2, b_col3 = st.columns(3)
-                with b_col1:
+              with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}"):
-                        supabase.table("social_posts").update({"caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"}).eq("id", p['id']).execute(); st.rerun()
+                        # 1. Update the Post Status
+                        supabase.table("social_posts").update({
+                            "caption": cap, 
+                            "scheduled_time": f"{din} {tin}", 
+                            "status": "scheduled"
+                        }).eq("id", p['id']).execute()
+                        
+                        # 2. NEW: Update Image Timestamp to NOW 🔴
+                        try:
+                            # We find the image in the library using the URL and timestamp it
+                            supabase.table("uploaded_images").update({
+                                "last_used_at": datetime.now().isoformat()
+                            }).eq("file_url", p['image_url']).execute()
+                        except Exception as e:
+                            print(f"Update failed: {e}")
+
+                        st.rerun()
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
                         # 1. DETERMINE TYPE
@@ -606,6 +648,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
