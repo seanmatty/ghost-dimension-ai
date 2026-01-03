@@ -514,15 +514,39 @@ with tab_dropbox:
 # --- TAB 4: VIDEO VAULT ---
 with tab_video_vault:
     st.subheader("📼 Video Reel Library")
+    # Fetch videos (including the new last_used_at column)
     videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).execute().data
     
     if videos:
         cols = st.columns(3)
         for idx, vid in enumerate(videos):
-            with cols[idx % 3]:
+            with cols[idx % 3]: 
                 with st.container(border=True):
+                    # --- 🚦 TRAFFIC LIGHT LOGIC ---
+                    last_used_str = vid.get('last_used_at')
+                    status_icon = "🟢" # Default
+                    status_msg = "Fresh"
+                    
+                    if last_used_str:
+                        try:
+                            # Calculate days since last use
+                            last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
+                            days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
+                            
+                            if days_ago < 30: 
+                                status_icon = "🔴"
+                                status_msg = f"{days_ago}d ago"
+                            else:
+                                status_icon = "🟢"
+                                status_msg = f"{days_ago}d ago"
+                        except:
+                            status_msg = "Unknown"
+                    
                     st.video(vid['file_url'])
+                    st.markdown(f"**{status_icon} {status_msg}**")
                     st.caption(f"📄 {vid['filename']}")
+                    # -----------------------------
+
                     c_draft, c_del = st.columns(2)
                     with c_draft:
                         if st.button("✨ CAPTION", key=f"vcap_{vid['id']}"):
@@ -531,7 +555,7 @@ with tab_video_vault:
                             supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": "Reel", "status": "draft"}).execute()
                             st.success("Draft Created! Check 'Command Center'.")
                     with c_del:
-                        if st.button("🗑️", key=f"vdel_{vid['id']}"):
+                        if st.button("🗑️", key=f"vdel_{vid['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
@@ -651,6 +675,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
