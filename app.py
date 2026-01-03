@@ -313,9 +313,9 @@ with tab_upload:
                 st.success("Saved!"); st.rerun()
     
     with c_lib:
-        st.subheader("2. Library (All)")
-        # We fetch the new 'last_used_at' column here automatically
-        lib = supabase.table("uploaded_images").select("*").order("created_at", desc=True).execute().data
+        st.subheader("2. Image Library (Photos Only)")
+        # FIX: Added .eq("media_type", "image") so videos don't show up here
+        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
         
         if lib:
             cols = st.columns(3)
@@ -675,6 +675,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
