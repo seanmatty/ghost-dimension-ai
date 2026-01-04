@@ -647,6 +647,14 @@ with d1:
 
                         except Exception as e:
                             st.error(f"❌ Database Error: {e}")
+                            # --- PASTE THIS RIGHT AFTER THE 'with b_col2' BLOCK ---
+                with b_col3:
+                    # This uses the third empty column for the delete button
+                    if st.button("🗑️ Discard", key=f"del_{p['id']}"):
+                        # Delete from Supabase
+                        supabase.table("social_posts").delete().eq("id", p['id']).execute()
+                        st.toast("🗑️ Draft discarded into the void.")
+                        st.rerun()
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -681,6 +689,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
