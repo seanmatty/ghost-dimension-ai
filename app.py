@@ -602,33 +602,27 @@ with d1:
                             print(f"Update failed: {e}")
 
                         st.rerun()
-                
-               with b_col2:
+              # MAKE SURE THIS 'with' ALIGNS WITH THE CODE ABOVE IT
+                with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
                         try:
-                            # --- 1. SET TIMESTAMP TO NOW ---
-                            # This tells the database: "This post is due right this second."
+                            # 1. SET TIMESTAMP TO NOW
                             now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-                            # --- 2. UPDATE DATABASE ONLY ---
-                            # We set status to 'scheduled' (NOT 'posted').
-                            # The Master Robot looks for 'scheduled' posts where time <= now.
-                            # It will pick this up instantly on its next run.
+                            # 2. UPDATE DATABASE ONLY
                             supabase.table("social_posts").update({
                                 "caption": cap,
                                 "scheduled_time": now_utc,
                                 "status": "scheduled"
                             }).eq("id", p['id']).execute()
 
-                            # --- 3. FEEDBACK ---
-                            st.success(f"✅ ACTIVATED! Post marked for immediate pickup at {now_utc}.")
-                            st.info("The Master Robot will process this automatically.")
+                            # 3. FEEDBACK
+                            st.success(f"✅ ACTIVATED! Marked for immediate pickup.")
                             st.balloons()
                             st.rerun()
 
                         except Exception as e:
                             st.error(f"❌ Database Error: {e}")
-
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -663,6 +657,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
