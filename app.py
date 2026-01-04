@@ -602,51 +602,51 @@ with d1:
                             print(f"Update failed: {e}")
 
                         st.rerun()
-              # MAKE SURE THIS 'with' ALIGNS WITH THE CODE ABOVE IT
+             # Make sure this 'with' lines up with 'with b_col1:' above it
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
-                    try:
-                        # 1. SET TIMESTAMP TO NOW
-                        now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-                        # 2. UPDATE DATABASE 
-                        supabase.table("social_posts").update({
-                            "caption": cap,
-                            "scheduled_time": now_utc,
-                            "status": "scheduled"
-                        }).eq("id", p['id']).execute()
-
-                        st.toast("✅ Database updated! Waking up the robot...")
-
-                        # 3. TRIGGER MAKE (THE WAKE UP CALL)
                         try:
-                            # Load secrets
-                            scenario_id = st.secrets["MAKE_SCENARIO_ID"]
-                            api_token = st.secrets["MAKE_API_TOKEN"]
+                            # 1. SET TIMESTAMP TO NOW
+                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+                            # 2. UPDATE DATABASE 
+                            supabase.table("social_posts").update({
+                                "caption": cap,
+                                "scheduled_time": now_utc,
+                                "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+
+                            st.toast("✅ Database updated! Waking up the robot...")
+
+                            # 3. TRIGGER MAKE (THE WAKE UP CALL)
+                            try:
+                                # Load secrets
+                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                api_token = st.secrets["MAKE_API_TOKEN"]
+                                
+                                # API URL (EU1 based on your previous secrets)
+                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                
+                                headers = {"Authorization": f"Token {api_token}"}
+                                
+                                # Send Signal
+                                mk_resp = requests.post(url, headers=headers)
+                                
+                                if mk_resp.status_code == 200:
+                                    st.success("🤖 Robot Woken Up! Posting Immediately.")
+                                elif mk_resp.status_code == 401:
+                                    st.error("❌ API Token Rejected. Check Secrets.")
+                                else:
+                                    st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}). It will pick up in 15 mins.")
                             
-                            # API URL (EU1 based on your previous secrets)
-                            url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                            
-                            headers = {"Authorization": f"Token {api_token}"}
-                            
-                            # Send Signal
-                            mk_resp = requests.post(url, headers=headers)
-                            
-                            if mk_resp.status_code == 200:
-                                st.success("🤖 Robot Woken Up! Posting Immediately.")
-                            elif mk_resp.status_code == 401:
-                                st.error("❌ API Token Rejected. Check Secrets.")
-                            else:
-                                st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}). It will pick up in 15 mins.")
-                        
+                            except Exception as e:
+                                st.error(f"Make Trigger Error: {e}")
+
+                            st.balloons()
+                            st.rerun()
+
                         except Exception as e:
-                            st.error(f"Make Trigger Error: {e}")
-
-                        st.balloons()
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"❌ Database Error: {e}")
+                            st.error(f"❌ Database Error: {e}")
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -681,6 +681,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
