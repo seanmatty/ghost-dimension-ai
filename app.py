@@ -603,43 +603,31 @@ with d1:
 
                         st.rerun()
                 
-                with b_col2:
+               with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
-                        # 1. DETERMINE TYPE
-                        media_type = "video" if ".mp4" in p['image_url'] else "image"
-                        
-                        # 2. PRINT DEBUG INFO TO SCREEN
-                        st.warning(f"📡 Preparing to send data...")
-                        st.write(f"**Target URL:** `{MAKE_WEBHOOK_URL}`")
-                        st.write(f"**Payload:** Type={media_type} | Link={p['image_url'][:30]}...")
-                        
                         try:
-                            # 3. SEND REQUEST
-                            response = requests.post(
-                                MAKE_WEBHOOK_URL, 
-                                json={"image_url": p['image_url'], "caption": cap, "media_type": media_type},
-                                timeout=10
-                            )
-                            
-                            # 4. REPORT RESULT
-                            if response.status_code == 200:
-                                st.success(f"✅ SUCCESS! Make.com accepted it (200 OK).")
-                                st.write(f"Server response: {response.text}")
-                                # Only update DB if successful
-                                supabase.table("social_posts").update({"caption": cap, "scheduled_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "status": "posted"}).eq("id", p['id']).execute()
-                                st.balloons()
-                            else:
-                                st.error(f"❌ FAILURE. Make.com rejected it.")
-                                st.error(f"Status Code: {response.status_code}")
-                                st.error(f"Response: {response.text}")
-                                
+                            # --- 1. SET TIMESTAMP TO NOW ---
+                            # This tells the database: "This post is due right this second."
+                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+                            # --- 2. UPDATE DATABASE ONLY ---
+                            # We set status to 'scheduled' (NOT 'posted').
+                            # The Master Robot looks for 'scheduled' posts where time <= now.
+                            # It will pick this up instantly on its next run.
+                            supabase.table("social_posts").update({
+                                "caption": cap,
+                                "scheduled_time": now_utc,
+                                "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+
+                            # --- 3. FEEDBACK ---
+                            st.success(f"✅ ACTIVATED! Post marked for immediate pickup at {now_utc}.")
+                            st.info("The Master Robot will process this automatically.")
+                            st.balloons()
+                            st.rerun()
+
                         except Exception as e:
-                            st.error(f"❌ CRITICAL ERROR: Could not connect to internet/Make.")
-                            st.code(e)
-                            
-                with b_col3:
-                    if st.button("🗑️", key=f"del_{p['id']}"):
-                        supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
+                            st.error(f"❌ Database Error: {e}")
 
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
@@ -675,6 +663,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
