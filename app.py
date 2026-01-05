@@ -654,21 +654,24 @@ with d1:
                     st.video(p['image_url'])
                     st.caption("🎥 VIDEO REEL")
                 else: 
-                    st.image(p['image_url'], use_column_width=True)
+                    st.image(p['image_url'], use_container_width=True)
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
-                # 1. User picks the date
-din = st.date_input("Date", key=f"dt_{p['id']}")
-
-# 2. App calculates best time for THAT date
-best_time = get_best_time_for_day(din)
-
-# 3. App sets the clock
-tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}")
                 
+                # --- 🧠 SMART CLOCK LOGIC ---
+                # 1. Pick the Date
+                din = st.date_input("Date", key=f"dt_{p['id']}")
+                
+                # 2. Ask the Brain for the best time for THIS specific date
+                best_time = get_best_time_for_day(din)
+                
+                # 3. Set the clock automatically
+                tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}")
+                # -----------------------------
+                
+                # These columns must align with the inputs above
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # --- FIXED INDENTATION HERE ---
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}"):
                         # 1. Update the Post Status
@@ -678,15 +681,59 @@ tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}")
                             "status": "scheduled"
                         }).eq("id", p['id']).execute()
                         
-                        # 2. NEW: Update Image Timestamp to NOW 🔴
+                        # 2. Update Image Timestamp
                         try:
-                            # We find the image in the library using the URL and timestamp it
                             supabase.table("uploaded_images").update({
                                 "last_used_at": datetime.now().isoformat()
                             }).eq("file_url", p['image_url']).execute()
                         except Exception as e:
                             print(f"Update failed: {e}")
 
+                        st.rerun()
+
+                with b_col2:
+                    if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
+                        try:
+                            # 1. SET TIMESTAMP TO NOW
+                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+                            # 2. UPDATE DATABASE 
+                            supabase.table("social_posts").update({
+                                "caption": cap,
+                                "scheduled_time": now_utc,
+                                "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+
+                            st.toast("✅ Database updated! Waking up the robot...")
+
+                            # 3. TRIGGER MAKE (THE WAKE UP CALL)
+                            try:
+                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                api_token = st.secrets["MAKE_API_TOKEN"]
+                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                headers = {"Authorization": f"Token {api_token}"}
+                                mk_resp = requests.post(url, headers=headers)
+                                
+                                if mk_resp.status_code == 200:
+                                    st.success("🤖 Robot Woken Up! Posting Immediately.")
+                                elif mk_resp.status_code == 401:
+                                    st.error("❌ API Token Rejected. Check Secrets.")
+                                else:
+                                    st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}).")
+                            
+                            except Exception as e:
+                                st.error(f"Make Trigger Error: {e}")
+
+                            st.balloons()
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"❌ Database Error: {e}")
+
+                with b_col3:
+                    if st.button("🗑️ Discard", key=f"del_{p['id']}"):
+                        supabase.table("social_posts").delete().eq("id", p['id']).execute()
+                        st.toast("🗑️ Draft discarded into the void.")
                         st.rerun()
              # Make sure this 'with' lines up with 'with b_col1:' above it
                 with b_col2:
@@ -775,6 +822,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
