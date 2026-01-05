@@ -657,7 +657,14 @@ with d1:
                     st.image(p['image_url'], use_column_width=True)
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
-                din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
+                # 1. User picks the date
+din = st.date_input("Date", key=f"dt_{p['id']}")
+
+# 2. App calculates best time for THAT date
+best_time = get_best_time_for_day(din)
+
+# 3. App sets the clock
+tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}")
                 
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
@@ -768,6 +775,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
