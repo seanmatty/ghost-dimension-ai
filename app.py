@@ -645,35 +645,54 @@ st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h
 d1, d2, d3 = st.tabs(["📝 DRAFTS", "📅 SCHEDULED", "📜 HISTORY"])
 
 with d1:
+    # 1. Fetch Drafts
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").order("created_at", desc=True).execute().data
-    for p in drafts:
+    
+    # 2. Loop with 'enumerate' to prevent Duplicate Key Errors
+    for idx, p in enumerate(drafts):
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
+            
+            # --- LEFT COLUMN: IMAGE/VIDEO ---
             with col1: 
                 if ".mp4" in p['image_url']: 
                     st.video(p['image_url'])
                     st.caption("🎥 VIDEO REEL")
                 else: 
-                    st.image(p['image_url'], use_column_width=True)
+                    st.image(p['image_url'], use_container_width=True)
+            
+            # --- RIGHT COLUMN: CONTROLS ---
             with col2:
-                cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}")
-                din, tin = st.date_input("Date", key=f"dt_{p['id']}"), st.time_input("Time", value=get_best_time_for_day(datetime.now()), key=f"tm_{p['id']}")
+                # Unique Key: cp_{id}_{index}
+                cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
                 
+                # --- 🧠 SMART CLOCK LOGIC (THE FIX) ---
+                # Step A: User picks the Date first
+                din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
+                
+                # Step B: We ask the Brain: "What is the best time for 'din' (the picked date)?"
+                # (We do NOT use datetime.now() here anymore)
+                best_time = get_best_time_for_day(din)
+                
+                # Step C: We set the clock to that result
+                tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}")
+                # -------------------------------------
+                
+                # Button Layout
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # --- FIXED INDENTATION HERE ---
+                # 📅 SCHEDULE BUTTON
                 with b_col1:
-                    if st.button("📅 Schedule", key=f"s_{p['id']}"):
-                        # 1. Update the Post Status
+                    if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
+                        # Update Post
                         supabase.table("social_posts").update({
                             "caption": cap, 
                             "scheduled_time": f"{din} {tin}", 
                             "status": "scheduled"
                         }).eq("id", p['id']).execute()
                         
-                        # 2. NEW: Update Image Timestamp to NOW 🔴
+                        # Update Image Timestamp (Traffic Light System)
                         try:
-                            # We find the image in the library using the URL and timestamp it
                             supabase.table("uploaded_images").update({
                                 "last_used_at": datetime.now().isoformat()
                             }).eq("file_url", p['image_url']).execute()
@@ -681,14 +700,15 @@ with d1:
                             print(f"Update failed: {e}")
 
                         st.rerun()
-             # Make sure this 'with' lines up with 'with b_col1:' above it
+
+                # 🚀 POST NOW BUTTON
                 with b_col2:
-                    if st.button("🚀 POST NOW", key=f"p_{p['id']}", type="primary"):
+                    if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
                         try:
-                            # 1. SET TIMESTAMP TO NOW
+                            # Set time to UTC NOW
                             now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-                            # 2. UPDATE DATABASE 
+                            # Update Database
                             supabase.table("social_posts").update({
                                 "caption": cap,
                                 "scheduled_time": now_utc,
@@ -697,18 +717,12 @@ with d1:
 
                             st.toast("✅ Database updated! Waking up the robot...")
 
-                            # 3. TRIGGER MAKE (THE WAKE UP CALL)
+                            # Trigger Make.com
                             try:
-                                # Load secrets
                                 scenario_id = st.secrets["MAKE_SCENARIO_ID"]
                                 api_token = st.secrets["MAKE_API_TOKEN"]
-                                
-                                # API URL (EU1 based on your previous secrets)
                                 url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                                
                                 headers = {"Authorization": f"Token {api_token}"}
-                                
-                                # Send Signal
                                 mk_resp = requests.post(url, headers=headers)
                                 
                                 if mk_resp.status_code == 200:
@@ -716,8 +730,7 @@ with d1:
                                 elif mk_resp.status_code == 401:
                                     st.error("❌ API Token Rejected. Check Secrets.")
                                 else:
-                                    st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}). It will pick up in 15 mins.")
-                            
+                                    st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}).")
                             except Exception as e:
                                 st.error(f"Make Trigger Error: {e}")
 
@@ -726,11 +739,10 @@ with d1:
 
                         except Exception as e:
                             st.error(f"❌ Database Error: {e}")
-                            # --- PASTE THIS RIGHT AFTER THE 'with b_col2' BLOCK ---
+
+                # 🗑️ DELETE BUTTON
                 with b_col3:
-                    # This uses the third empty column for the delete button
-                    if st.button("🗑️ Discard", key=f"del_{p['id']}"):
-                        # Delete from Supabase
+                    if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute()
                         st.toast("🗑️ Draft discarded into the void.")
                         st.rerun()
@@ -768,6 +780,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
