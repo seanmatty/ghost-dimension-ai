@@ -648,12 +648,11 @@ with d1:
     # 1. Fetch Drafts
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").order("created_at", desc=True).execute().data
     
-    # 2. Loop with 'enumerate' to prevent Duplicate Key Errors
     for idx, p in enumerate(drafts):
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
             
-            # --- LEFT COLUMN: IMAGE/VIDEO ---
+            # --- LEFT COLUMN: IMAGE ---
             with col1: 
                 if ".mp4" in p['image_url']: 
                     st.video(p['image_url'])
@@ -663,52 +662,46 @@ with d1:
             
             # --- RIGHT COLUMN: CONTROLS ---
             with col2:
-                # Unique Key: cp_{id}_{index}
+                # Caption
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
                 
-                # --- 🧠 SMART CLOCK LOGIC (THE FIX) ---
-                # Step A: User picks the Date first
+                # --- 🧠 SMART CLOCK LOGIC (FIXED) ---
+                # 1. Pick Date
                 din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
                 
-                # Step B: We ask the Brain: "What is the best time for 'din' (the picked date)?"
-                # (We do NOT use datetime.now() here anymore)
+                # 2. Get Strategy
                 best_time = get_best_time_for_day(din)
                 
-                # Step C: We set the clock to that result
-                tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}")
-                # -------------------------------------
+                # 3. Set Time (Crucial Fix: Key depends on Date 'din')
+                # This forces Streamlit to redraw the widget when the date changes
+                tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}_{din}")
+                # ------------------------------------
                 
-                # Button Layout
+                # Buttons
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # 📅 SCHEDULE BUTTON
+                # 📅 SCHEDULE
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
-                        # Update Post
                         supabase.table("social_posts").update({
                             "caption": cap, 
                             "scheduled_time": f"{din} {tin}", 
                             "status": "scheduled"
                         }).eq("id", p['id']).execute()
                         
-                        # Update Image Timestamp (Traffic Light System)
                         try:
                             supabase.table("uploaded_images").update({
                                 "last_used_at": datetime.now().isoformat()
                             }).eq("file_url", p['image_url']).execute()
                         except Exception as e:
                             print(f"Update failed: {e}")
-
                         st.rerun()
 
-                # 🚀 POST NOW BUTTON
+                # 🚀 POST NOW
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
                         try:
-                            # Set time to UTC NOW
                             now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-                            # Update Database
                             supabase.table("social_posts").update({
                                 "caption": cap,
                                 "scheduled_time": now_utc,
@@ -717,34 +710,29 @@ with d1:
 
                             st.toast("✅ Database updated! Waking up the robot...")
 
-                            # Trigger Make.com
+                            # Trigger Make
                             try:
                                 scenario_id = st.secrets["MAKE_SCENARIO_ID"]
                                 api_token = st.secrets["MAKE_API_TOKEN"]
                                 url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
                                 headers = {"Authorization": f"Token {api_token}"}
                                 mk_resp = requests.post(url, headers=headers)
-                                
                                 if mk_resp.status_code == 200:
-                                    st.success("🤖 Robot Woken Up! Posting Immediately.")
-                                elif mk_resp.status_code == 401:
-                                    st.error("❌ API Token Rejected. Check Secrets.")
+                                    st.success("🤖 Robot Woken Up!")
                                 else:
-                                    st.warning(f"Database ready, but Robot didn't wake (Code {mk_resp.status_code}).")
+                                    st.warning(f"Robot Code: {mk_resp.status_code}")
                             except Exception as e:
-                                st.error(f"Make Trigger Error: {e}")
-
+                                st.error(f"Make Error: {e}")
                             st.balloons()
                             st.rerun()
-
                         except Exception as e:
-                            st.error(f"❌ Database Error: {e}")
+                            st.error(f"DB Error: {e}")
 
-                # 🗑️ DELETE BUTTON
+                # 🗑️ DISCARD
                 with b_col3:
                     if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute()
-                        st.toast("🗑️ Draft discarded into the void.")
+                        st.toast("🗑️ Discarded")
                         st.rerun()
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
@@ -780,6 +768,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
