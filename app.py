@@ -1,6 +1,7 @@
 import streamlit as st
 import hmac
 from openai import OpenAI
+import pandas as pd
 from google import genai
 from google.genai import types
 from supabase import create_client
@@ -214,8 +215,8 @@ total_ev = supabase.table("social_posts").select("id", count="exact").eq("status
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
-# --- TABS ---
-tab_gen, tab_upload, tab_dropbox, tab_video_vault = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT"])
+# TABS:
+tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS"])
 
 # --- TAB 1: NANO GENERATOR ---
 with tab_gen:
@@ -559,7 +560,73 @@ with tab_video_vault:
                             supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
+# --- TAB 5: ANALYTICS & STRATEGY ---
+with tab_analytics:
+    st.subheader("📈 The Feedback Loop")
+    
+    # 1. FETCH DATA (Only posts that have stats)
+    # We look at the last 50 posted items to get a good trend
+    history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(50).execute().data
+    
+    if len(history) > 0:
+        df = pd.DataFrame(history)
+        
+        # Convert timestamps to readable days/hours
+        df['created_at'] = pd.to_datetime(df['created_at'])
+        df['day_name'] = df['created_at'].dt.day_name()
+        df['hour'] = df['created_at'].dt.hour
+        
+        # Calculate "Ghost Score" (Weighted Engagement)
+        # Comments are worth 5x more than a Like
+        df['score'] = df['likes'] + (df['comments'] * 5)
+        
+        # 2. SHOW THE WINNERS
+        c_win, c_chart = st.columns([1, 2])
+        with c_win:
+            st.write("🏆 **Top Videos**")
+            # Show top 5 videos by score
+            st.dataframe(df[['caption', 'score', 'views']].sort_values('score', ascending=False).head(5), hide_index=True)
+            
+        with c_chart:
+            st.write("📊 **Best Hour by Day**")
+            # Create a simple bar chart of Score vs Hour
+            chart_data = df.groupby('hour')['score'].mean()
+            st.bar_chart(chart_data)
 
+        # 3. THE BRAIN UPDATE BUTTON
+        st.divider()
+        st.info("Click below to teach the Scheduler your new best times.")
+        
+        if st.button("🧠 UPDATE STRATEGY", type="primary"):
+            days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            
+            progress_text = "Analyzing data..."
+            my_bar = st.progress(0, text=progress_text)
+            
+            # Find best hour for each day
+            for i, day in enumerate(days_order):
+                day_data = df[df['day_name'] == day]
+                
+                if not day_data.empty:
+                    # Find hour with max average score
+                    best_h = int(day_data.groupby('hour')['score'].mean().idxmax())
+                else:
+                    # Default to 20:00 (8 PM) if no data for that day yet
+                    best_h = 20
+                
+                # Save to Supabase 'strategy' table
+                # This overwrites the old rule for that day
+                supabase.table("strategy").upsert({"day": day, "best_hour": best_h}, on_conflict="day").execute()
+                
+                # Update progress bar
+                my_bar.progress((i + 1) / 7, text=f"Updated {day}...")
+            
+            my_bar.empty()
+            st.success("✅ Strategy Updated! New drafts will auto-select these times.")
+            st.cache_data.clear()
+            
+    else:
+        st.info("⏳ Waiting for data... Once 'The Spy' scenario runs and grabs YouTube stats, this tab will light up.")
 # --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h2>", unsafe_allow_html=True)
@@ -689,6 +756,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
