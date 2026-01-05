@@ -577,15 +577,17 @@ with tab_analytics:
         df['hour'] = df['created_at'].dt.hour
         
         # Calculate "Ghost Score" (Weighted Engagement)
-        # Comments are worth 5x more than a Like
-        df['score'] = df['likes'] + (df['comments'] * 5)
-        
-        # 2. SHOW THE WINNERS
-        c_win, c_chart = st.columns([1, 2])
-        with c_win:
-            st.write("🏆 **Top Videos**")
-            # Show top 5 videos by score
-            st.dataframe(df[['caption', 'score', 'views']].sort_values('score', ascending=False).head(5), hide_index=True)
+# 1. Fill missing columns with 0 to prevent crash
+if 'likes' not in df.columns: df['likes'] = 0
+if 'comments' not in df.columns: df['comments'] = 0
+if 'views' not in df.columns: df['views'] = 0
+
+# 2. Ensure numbers are numbers (not None/NaN)
+df['likes'] = df['likes'].fillna(0)
+df['comments'] = df['comments'].fillna(0)
+
+# 3. Calculate Score
+df['score'] = df['likes'] + (df['comments'] * 5)
             
         with c_chart:
             st.write("📊 **Best Hour by Day**")
@@ -756,6 +758,7 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
             supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
             supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
     else: st.button("✅ VAULT IS CURRENT", disabled=True)
+
 
 
 
