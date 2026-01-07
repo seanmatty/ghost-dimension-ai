@@ -457,39 +457,39 @@ with tab_dropbox:
             with c_eff: effect_choice = st.selectbox("Effect:", EFFECTS_LIST)
             with c_dur: clip_dur = st.slider("Duration (s)", 5, 60, 15)
 
-            if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
-    st.markdown("### 🎬 MONITOR")
-    c_vid, c_act = st.columns([1, 1])
-    with c_vid: 
-        st.video(st.session_state.preview_reel_path)
-    with c_act:
-        if st.button("✅ APPROVE & VAULT", type="primary"):
-            # 1. Create a unique filename
-            fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-            
-            # 2. Upload the temporary local file to Dropbox
-            url = upload_to_social_system(st.session_state.preview_reel_path, fn)
-            
-            if url:
-                # 3. Save the Dropbox URL into your existing Supabase table
-                supabase.table("uploaded_images").insert({
-                    "file_url": url, 
-                    "filename": fn, 
-                    "media_type": "video"
-                }).execute()
-                
-                st.success("Vaulted to Dropbox Social System!")
-                
-                # 4. Cleanup local temp file
-                os.remove(st.session_state.preview_reel_path)
-                del st.session_state.preview_reel_path
-                st.rerun()
-                
-        if st.button("❌ DISCARD PREVIEW"):
-            os.remove(st.session_state.preview_reel_path)
-            del st.session_state.preview_reel_path
-            st.rerun()
-    st.divider()
+if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
+                st.markdown("### 🎬 MONITOR")
+                c_vid, c_act = st.columns([1, 1])
+                with c_vid: 
+                    st.video(st.session_state.preview_reel_path)
+                with c_act:
+                    if st.button("✅ APPROVE & VAULT", type="primary"):
+                        # 1. Create a unique filename
+                        fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                        
+                        # 2. Upload the temporary local file to Dropbox
+                        url = upload_to_social_system(st.session_state.preview_reel_path, fn)
+                        
+                        if url:
+                            # 3. Save the Dropbox URL into your existing Supabase table
+                            supabase.table("uploaded_images").insert({
+                                "file_url": url, 
+                                "filename": fn, 
+                                "media_type": "video"
+                            }).execute()
+                            
+                            st.success("Vaulted to Dropbox Social System!")
+                            
+                            # 4. Cleanup local temp file
+                            os.remove(st.session_state.preview_reel_path)
+                            del st.session_state.preview_reel_path
+                            st.rerun()
+                            
+                    if st.button("❌ DISCARD PREVIEW"):
+                        os.remove(st.session_state.preview_reel_path)
+                        del st.session_state.preview_reel_path
+                        st.rerun()
+                st.divider()
 
             # HEADER WITH CLEAR BUTTON
             c_head, c_clear = st.columns([3, 1])
@@ -826,6 +826,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
