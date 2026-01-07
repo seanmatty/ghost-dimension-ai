@@ -18,6 +18,7 @@ import numpy as np
 import os
 import subprocess
 import tempfile
+import dropbox #
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -62,6 +63,27 @@ google_client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
+def get_dbx():
+    """Handles auto-refreshing tokens for 24/7 operation"""
+    return dropbox.Dropbox(
+        app_key=st.secrets["DROPBOX_APP_KEY"],
+        app_secret=st.secrets["DROPBOX_APP_SECRET"],
+        oauth2_refresh_token=st.secrets["DROPBOX_REFRESH_TOKEN"]
+    )
+
+def upload_to_social_system(local_path, file_name):
+    """Moves any file to Dropbox and returns a direct stream link"""
+    try:
+        dbx = get_dbx()
+        db_path = f"/Social System/{file_name}"
+        with open(local_path, "rb") as f:
+            dbx.files_upload(f.read(), db_path, mode=dropbox.files.WriteMode.overwrite)
+            # Create a shared link and convert it to a direct download link
+            shared_link = dbx.sharing_create_shared_link_with_settings(db_path)
+            return shared_link.url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "&raw=1")
+    except Exception as e:
+        st.error(f"Dropbox Fail: {e}"); return None
+
 # --- GLOBAL OPTIONS ---
 STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
@@ -86,11 +108,15 @@ def get_brand_knowledge():
 
 def save_ai_image_to_storage(image_bytes):
     try:
-        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
-        supabase.storage.from_("uploads").upload(filename, image_bytes, {"content-type": "image/png"})
-        return supabase.storage.from_("uploads").get_public_url(filename)
+        filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+        url = upload_to_social_system(tmp_path, filename) #
+        os.remove(tmp_path)
+        return url
     except Exception as e:
-        st.error(f"Save failed: {e}"); return None
+        st.error(f"Image Save failed: {e}"); return None
 
 def generate_random_ghost_topic():
     knowledge = get_brand_knowledge()
@@ -301,16 +327,18 @@ with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     with c_up:
         st.subheader("1. Upload")
-        f = st.file_uploader("Evidence", type=['jpg', 'png', 'jpeg'])
-        u_strategy = st.selectbox("Caption Strategy", STRATEGY_OPTIONS, key="u_strat")
+        f = st.file_uploader("Photos", type=['jpg', 'png', 'jpeg'])
         if f:
             image = ImageOps.exif_transpose(Image.open(f))
             cropped = st_cropper(image, aspect_ratio=(1,1), box_color='#00ff41')
-            if st.button("✅ SAVE TO VAULT", type="primary"):
+            if st.button("✅ SAVE TO DROPBOX", type="primary"):
                 buf = io.BytesIO(); cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
                 fname = f"ev_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                    tmp.write(buf.getvalue()); tmp_path = tmp.name
+                url = upload_to_social_system(tmp_path, fname) #
+                os.remove(tmp_path)
+                supabase.table("uploaded_images").insert({"file_url": url, "filename": fname, "media_type": "image"}).execute()
                 st.success("Saved!"); st.rerun()
     
     with c_lib:
@@ -430,20 +458,38 @@ with tab_dropbox:
             with c_dur: clip_dur = st.slider("Duration (s)", 5, 60, 15)
 
             if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
-                st.markdown("### 🎬 MONITOR")
-                c_vid, c_act = st.columns([1, 1])
-                with c_vid: st.video(st.session_state.preview_reel_path)
-                with c_act:
-                    if st.button("✅ APPROVE", type="primary"):
-                        with open(st.session_state.preview_reel_path, "rb") as f:
-                            fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                            supabase.storage.from_("uploads").upload(fn, f, {"content-type": "video/mp4"})
-                            url = supabase.storage.from_("uploads").get_public_url(fn)
-                            supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
-                        st.success("Vaulted!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-                    if st.button("❌ DISCARD PREVIEW"):
-                        os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-                st.divider()
+    st.markdown("### 🎬 MONITOR")
+    c_vid, c_act = st.columns([1, 1])
+    with c_vid: 
+        st.video(st.session_state.preview_reel_path)
+    with c_act:
+        if st.button("✅ APPROVE & VAULT", type="primary"):
+            # 1. Create a unique filename
+            fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+            
+            # 2. Upload the temporary local file to Dropbox
+            url = upload_to_social_system(st.session_state.preview_reel_path, fn)
+            
+            if url:
+                # 3. Save the Dropbox URL into your existing Supabase table
+                supabase.table("uploaded_images").insert({
+                    "file_url": url, 
+                    "filename": fn, 
+                    "media_type": "video"
+                }).execute()
+                
+                st.success("Vaulted to Dropbox Social System!")
+                
+                # 4. Cleanup local temp file
+                os.remove(st.session_state.preview_reel_path)
+                del st.session_state.preview_reel_path
+                st.rerun()
+                
+        if st.button("❌ DISCARD PREVIEW"):
+            os.remove(st.session_state.preview_reel_path)
+            del st.session_state.preview_reel_path
+            st.rerun()
+    st.divider()
 
             # HEADER WITH CLEAR BUTTON
             c_head, c_clear = st.columns([3, 1])
@@ -758,16 +804,29 @@ with d3:
                  else: st.image(p['image_url'], use_column_width=True)
             with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
 
+# --- MAINTENANCE & TOKEN GEN ---
 st.markdown("---")
-with st.expander("🛠️ SYSTEM MAINTENANCE & PURGE", expanded=False):
-    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
-    old_data = supabase.table("social_posts").select("id, image_url").eq("status", "posted").lt("created_at", sixty_days_ago).execute().data
-    st.write(f"📂 **Overdue for Purge:** {len(old_data)} files")
-    if len(old_data) > 0:
-        if st.button("🔥 INCINERATE OLD EVIDENCE"):
-            supabase.storage.from_("uploads").remove([u['image_url'].split('/')[-1] for u in old_data])
-            supabase.table("social_posts").delete().in_("id", [i['id'] for i in old_data]).execute(); st.rerun()
-    else: st.button("✅ VAULT IS CURRENT", disabled=True)
+with st.expander("🛠️ SYSTEM MAINTENANCE & 7-DAY PURGE"):
+    # Clear bandwidth by wiping Supabase files older than 7 days
+    purge_limit = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    old_files = supabase.table("social_posts").select("image_url").eq("status", "posted").lt("created_at", purge_limit).execute().data
+    if st.button("🔥 INCINERATE SUPABASE FILES"):
+        supabase.storage.from_("uploads").remove([f['image_url'].split('/')[-1] for f in old_files])
+        st.success("Bandwidth cleared!"); st.rerun()
+
+with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
+    st.write("1. Get App Key/Secret from Dropbox Console.")
+    st.write("2. Open this URL in a new tab (replace YOUR_APP_KEY):")
+    st.code("https://www.dropbox.com/oauth2/authorize?client_id=YOUR_APP_KEY&token_access_type=offline&response_type=code")
+    a_key = st.text_input("App Key", key="db_k")
+    a_secret = st.text_input("App Secret", key="db_s")
+    auth_code = st.text_input("Paste Auth Code", key="db_a")
+    if st.button("🚀 GENERATE REFRESH TOKEN"):
+        res = requests.post('https://api.dropbox.com/oauth2/token', 
+                            data={'code': auth_code, 'grant_type': 'authorization_code'}, 
+                            auth=(a_key, a_secret))
+        st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
