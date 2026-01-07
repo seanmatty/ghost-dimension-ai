@@ -497,7 +497,7 @@ with tab_dropbox:
                                 st.session_state.preview_reel_path = temp_name
                                 st.rerun()
 
-    # B. PRECISION CUTTER
+# B. PRECISION CUTTER
     elif tool_mode.startswith("⏱️"):
         st.info("Step 1: Watch to find the time. Step 2: Drag slider to that time.")
         
@@ -523,6 +523,7 @@ with tab_dropbox:
             with c_dur:
                 man_dur = st.slider("Clip Duration (Seconds)", 5, 60, 15)
             with c_eff:
+                # Included the effects list here so it doesn't crash
                 EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
                 man_effect = st.selectbox("Effect", EFFECTS_LIST, key="man_fx")
 
@@ -532,18 +533,23 @@ with tab_dropbox:
                     if process_reel(db_url, start_ts, man_dur, man_effect, temp_name):
                         st.session_state.preview_reel_path = temp_name; st.rerun()
 
+        # --- UPDATED APPROVAL LOGIC (NOW USES DROPBOX) ---
         if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
             st.markdown("### 🎬 MONITOR")
             c_vid, c_act = st.columns([1, 1])
             with c_vid: st.video(st.session_state.preview_reel_path)
             with c_act:
                 if st.button("✅ APPROVE & VAULT", key="man_save", type="primary"):
-                    with open(st.session_state.preview_reel_path, "rb") as f:
-                        fn = f"reel_prec_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                        supabase.storage.from_("uploads").upload(fn, f, {"content-type": "video/mp4"})
-                        url = supabase.storage.from_("uploads").get_public_url(fn)
+                    fn = f"reel_prec_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                    
+                    # 1. SEND TO DROPBOX (Not Supabase Storage)
+                    url = upload_to_social_system(st.session_state.preview_reel_path, fn)
+                    
+                    if url:
+                        # 2. SAVE LINK TO DATABASE
                         supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
-                    st.success("Vaulted!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
+                        st.success("Vaulted to Dropbox!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
+                
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
 
@@ -815,6 +821,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
