@@ -183,32 +183,49 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
 
 def update_youtube_stats():
     """
-    Fetches stats using the 'platform_post_id' column.
-    By default, Supabase returns the last 1,000 rows, so this looks at ALL your active history.
+    Robust Version: Pulls ALL posted videos and filters valid IDs in Python 
+    to avoid SQL NULL errors. Includes debugging output.
     """
-    # 1. Fetch posts that have a YouTube ID saved
-    posts = supabase.table("social_posts").select("id, platform_post_id").eq("status", "posted").neq("platform_post_id", "null").execute().data
+    # 1. Fetch ALL posted items (Don't filter IDs yet)
+    response = supabase.table("social_posts").select("id, platform_post_id, caption").eq("status", "posted").execute()
+    posts = response.data
     
     if not posts: 
-        return "No videos with 'platform_post_id' found."
+        return "⚠️ No posts found with status='posted'."
 
-    # 2. Map Video IDs to Database IDs
-    video_map = {p['platform_post_id']: p['id'] for p in posts}
+    # 2. Filter in Python (Safer than SQL)
+    # We only keep rows where platform_post_id exists AND is not empty
+    valid_posts = [p for p in posts if p.get('platform_post_id') and len(p['platform_post_id']) > 2]
+    
+    if not valid_posts:
+        # Debugging: Show the user what the first few bad rows look like
+        sample = posts[:3] if posts else "None"
+        return f"⚠️ Found {len(posts)} posted items, but NONE had valid IDs. Sample data: {sample}"
+
+    # 3. Map IDs
+    video_map = {p['platform_post_id']: p['id'] for p in valid_posts}
     video_ids = list(video_map.keys())
+    
+    st.toast(f"🔎 Found {len(video_ids)} videos to sync...")
 
-    # 3. Auth with Google
-    creds = Credentials(
-        token=st.secrets["YOUTUBE_TOKEN"],
-        refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=st.secrets["YOUTUBE_CLIENT_ID"],
-        client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
-        scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
-    )
-    youtube = build('youtube', 'v3', credentials=creds)
+    # 4. Auth with Google
+    try:
+        creds = Credentials(
+            token=st.secrets["YOUTUBE_TOKEN"],
+            refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+            client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+            scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
+        )
+        youtube = build('youtube', 'v3', credentials=creds)
+    except Exception as e:
+        return f"❌ Google Auth Failed: {e}"
 
-    # 4. Batch Process (50 videos at a time)
+    # 5. Batch Process
     count = 0
+    total_views_found = 0
+    
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i+50]
         try:
@@ -219,18 +236,22 @@ def update_youtube_stats():
                 vid_id = item['id']
                 db_id = video_map.get(vid_id)
                 
+                views = int(stats.get('viewCount', 0))
+                
                 if db_id:
                     supabase.table("social_posts").update({
-                        "views": int(stats.get('viewCount', 0)),
+                        "views": views,
                         "likes": int(stats.get('likeCount', 0)),
                         "comments": int(stats.get('commentCount', 0)),
                         "last_updated": datetime.now().isoformat()
                     }).eq("id", db_id).execute()
                     count += 1
+                    total_views_found += views
+                    
         except Exception as e:
-            print(f"Batch failed: {e}")
+            st.error(f"Batch Error: {e}")
 
-    return f"✅ Synced {count} videos."
+    return f"✅ Success! Synced {count} videos (Total Views: {total_views_found})."
 
 def generate_random_ghost_topic():
     knowledge = get_brand_knowledge()
@@ -966,6 +987,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
