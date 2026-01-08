@@ -184,7 +184,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
 def update_youtube_stats():
     """
     Robust Version: Pulls ALL posted videos and filters valid IDs in Python 
-    to avoid SQL NULL errors. Includes debugging output.
+    to avoid SQL NULL errors. (Fixed: Removed 'last_updated' to prevent DB error).
     """
     # 1. Fetch ALL posted items (Don't filter IDs yet)
     response = supabase.table("social_posts").select("id, platform_post_id, caption").eq("status", "posted").execute()
@@ -242,8 +242,8 @@ def update_youtube_stats():
                     supabase.table("social_posts").update({
                         "views": views,
                         "likes": int(stats.get('likeCount', 0)),
-                        "comments": int(stats.get('commentCount', 0)),
-                        "last_updated": datetime.now().isoformat()
+                        "comments": int(stats.get('commentCount', 0))
+                        # REMOVED 'last_updated' to fix your error
                     }).eq("id", db_id).execute()
                     count += 1
                     total_views_found += views
@@ -987,6 +987,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
