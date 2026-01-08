@@ -839,9 +839,9 @@ with d1:
             col1, col2 = st.columns([1, 2])
             
             # --- DETECT MEDIA TYPE ---
-            is_video = ".mp4" in p['image_url']
+            is_video = ".mp4" in p['image_url'] or "youtu" in p['image_url']
             
-            # --- LEFT: IMAGE/VIDEO PREVIEW ---
+            # --- LEFT: PREVIEW ---
             with col1: 
                 if is_video: 
                     st.video(p['image_url']); st.caption("🎥 VIDEO REEL")
@@ -864,28 +864,46 @@ with d1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         target_dt = datetime.combine(din, tin)
                         
-                        # --- PATH A: VIDEO (NEW SYSTEM) ---
+                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner(f"🚀 Uploading to YouTube (Timed for {target_dt})..."):
+                            with st.spinner(f"🚀 Step 1: Uploading to YouTube..."):
+                                # 1. Download from Dropbox to Temp
                                 dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
+                                # 2. Upload to YouTube (Private Scheduled)
                                 yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, target_dt)
                                 os.remove(local_path)
 
                                 if yt_link:
                                     yt_id = yt_link.split("/")[-1]
-                                    st.balloons()
+                                    st.success(f"✅ YouTube Done! ID: {yt_id}")
+                                    
+                                    # 3. Update DB for MAKE (Keep Dropbox Link!)
                                     supabase.table("social_posts").update({
-                                        "status": "posted", "image_url": yt_link, "platform_post_id": yt_id, "scheduled_time": str(target_dt)
+                                        "status": "scheduled",          # Keep as SCHEDULED for Make
+                                        "caption": cap,
+                                        "platform_post_id": yt_id,      # Save YT ID for Analytics
+                                        "scheduled_time": str(target_dt)
+                                        # Note: We do NOT overwrite image_url yet, Make needs the Dropbox link!
                                     }).eq("id", p['id']).execute()
+                                    
+                                    st.toast("🤖 Waking up Make for FB/Insta...")
+                                    
+                                    # 4. Trigger Make
+                                    try:
+                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                        api_token = st.secrets["MAKE_API_TOKEN"]
+                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                        headers = {"Authorization": f"Token {api_token}"}
+                                        requests.post(url, headers=headers)
+                                    except: pass
                                     st.rerun()
                         
-                        # --- PATH B: IMAGE (OLD SYSTEM - MAKE.COM) ---
+                        # --- PATH B: IMAGE (STANDARD MAKE) ---
                         else:
-                            # Just update DB. Make will find it in Dropbox later.
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
                             }).eq("id", p['id']).execute()
@@ -895,45 +913,56 @@ with d1:
                 # 🚀 POST NOW BUTTON
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
+                        now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # --- PATH A: VIDEO (NEW SYSTEM) ---
+                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner("🚀 Uploading to YouTube..."):
+                            with st.spinner("🚀 Step 1: Uploading to YouTube..."):
                                 dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
+                                # Upload Immediate
                                 yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, None)
                                 os.remove(local_path)
 
                                 if yt_link:
                                     yt_id = yt_link.split("/")[-1]
-                                    st.balloons()
+                                    st.success(f"✅ YouTube Live! ID: {yt_id}")
+                                    
+                                    # Update DB for MAKE
                                     supabase.table("social_posts").update({
-                                        "status": "posted", "image_url": yt_link, "platform_post_id": yt_id, "scheduled_time": datetime.now().isoformat()
+                                        "status": "scheduled",       # Make needs to see 'scheduled' to act
+                                        "caption": cap,
+                                        "platform_post_id": yt_id,   # Save ID
+                                        "scheduled_time": now_utc
                                     }).eq("id", p['id']).execute()
+                                    
+                                    # Wake Make
+                                    try:
+                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                        api_token = st.secrets["MAKE_API_TOKEN"]
+                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                        headers = {"Authorization": f"Token {api_token}"}
+                                        requests.post(url, headers=headers)
+                                    except: pass
                                     st.rerun()
 
-                        # --- PATH B: IMAGE (OLD SYSTEM - WAKE UP MAKE) ---
+                        # --- PATH B: IMAGE (STANDARD MAKE) ---
                         else:
                             st.spinner("Waking up the Robot...")
-                            # 1. Update DB
-                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
                             }).eq("id", p['id']).execute()
                             
-                            # 2. Trigger Make (Restored your old code)
                             try:
                                 scenario_id = st.secrets["MAKE_SCENARIO_ID"]
                                 api_token = st.secrets["MAKE_API_TOKEN"]
                                 url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
                                 headers = {"Authorization": f"Token {api_token}"}
-                                mk_resp = requests.post(url, headers=headers)
-                                if mk_resp.status_code == 200: st.success("🤖 Robot Woken Up!")
-                                else: st.warning(f"Robot Code: {mk_resp.status_code}")
-                            except Exception as e: st.error(f"Make Error: {e}")
+                                requests.post(url, headers=headers)
+                            except: pass
                             st.rerun()
 
                 # 🗑️ DISCARD
@@ -987,6 +1016,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
