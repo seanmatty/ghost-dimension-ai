@@ -182,18 +182,21 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         return None
 
 def update_youtube_stats():
-    """Fetches Views/Likes for all posted videos and updates Supabase."""
-    posts = supabase.table("social_posts").select("id, image_url").eq("status", "posted").ilike("image_url", "%youtu%").execute().data
-    if not posts: return "No YouTube videos found."
-
-    # Map Video IDs
-    video_map = {}
-    for p in posts:
-        vid_id = p['image_url'].split("/")[-1].replace("watch?v=", "")
-        video_map[vid_id] = p['id']
+    """
+    Fetches stats using the 'platform_post_id' column.
+    By default, Supabase returns the last 1,000 rows, so this looks at ALL your active history.
+    """
+    # 1. Fetch posts that have a YouTube ID saved
+    posts = supabase.table("social_posts").select("id, platform_post_id").eq("status", "posted").neq("platform_post_id", "null").execute().data
     
+    if not posts: 
+        return "No videos with 'platform_post_id' found."
+
+    # 2. Map Video IDs to Database IDs
+    video_map = {p['platform_post_id']: p['id'] for p in posts}
     video_ids = list(video_map.keys())
 
+    # 3. Auth with Google
     creds = Credentials(
         token=st.secrets["YOUTUBE_TOKEN"],
         refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
@@ -204,21 +207,29 @@ def update_youtube_stats():
     )
     youtube = build('youtube', 'v3', credentials=creds)
 
+    # 4. Batch Process (50 videos at a time)
     count = 0
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i+50]
-        res = youtube.videos().list(part="statistics", id=','.join(batch)).execute()
+        try:
+            res = youtube.videos().list(part="statistics", id=','.join(batch)).execute()
 
-        for item in res.get("items", []):
-            stats = item['statistics']
-            db_id = video_map.get(item['id'])
-            if db_id:
-                supabase.table("social_posts").update({
-                    "views": int(stats.get('viewCount', 0)),
-                    "likes": int(stats.get('likeCount', 0)),
-                    "comments": int(stats.get('commentCount', 0))
-                }).eq("id", db_id).execute()
-                count += 1
+            for item in res.get("items", []):
+                stats = item['statistics']
+                vid_id = item['id']
+                db_id = video_map.get(vid_id)
+                
+                if db_id:
+                    supabase.table("social_posts").update({
+                        "views": int(stats.get('viewCount', 0)),
+                        "likes": int(stats.get('likeCount', 0)),
+                        "comments": int(stats.get('commentCount', 0)),
+                        "last_updated": datetime.now().isoformat()
+                    }).eq("id", db_id).execute()
+                    count += 1
+        except Exception as e:
+            print(f"Batch failed: {e}")
+
     return f"✅ Synced {count} videos."
 
 def generate_random_ghost_topic():
@@ -800,112 +811,114 @@ with d1:
     # 1. Fetch Drafts
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").order("created_at", desc=True).execute().data
     
-    if not drafts:
-        st.info("No drafts found. Generate some content in the Nano Generator!")
+    if not drafts: st.info("No drafts found.")
 
     for idx, p in enumerate(drafts):
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
             
-            # --- LEFT COLUMN: IMAGE ---
-            with col1: 
-                if ".mp4" in p['image_url']: 
-                    st.video(p['image_url'])
-                    st.caption("🎥 VIDEO REEL")
-                else: 
-                    st.image(p['image_url'], use_container_width=True)
+            # --- DETECT MEDIA TYPE ---
+            is_video = ".mp4" in p['image_url']
             
-            # --- RIGHT COLUMN: CONTROLS ---
+            # --- LEFT: IMAGE/VIDEO PREVIEW ---
+            with col1: 
+                if is_video: 
+                    st.video(p['image_url']); st.caption("🎥 VIDEO REEL")
+                else: 
+                    st.image(p['image_url'], use_container_width=True); st.caption("📸 PHOTO POST")
+            
+            # --- RIGHT: CONTROLS ---
             with col2:
-                # Caption Editor
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
                 
-                # --- 🧠 SMART CLOCK LOGIC ---
-                # 1. Pick Date
+                # Smart Clock
                 din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
-                
-                # 2. Get Strategy (Best time for that day)
                 best_time = get_best_time_for_day(din)
-                
-                # 3. Set Time
                 tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}_{din}")
-                # ------------------------------------
                 
-                # ACTION BUTTONS
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # 📅 SCHEDULE (DIRECT NATIVE)
+                # 📅 SCHEDULE BUTTON
                 with b_col1:
-                    if st.button("📅 Schedule Upload", key=f"s_{p['id']}_{idx}"):
+                    if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         target_dt = datetime.combine(din, tin)
                         
-                        with st.spinner(f"🚀 Uploading to YouTube (Timed for {target_dt})..."):
-                            # 1. Download from Dropbox to Temp (Convert to direct link)
-                            dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
-                            r = requests.get(dl_link)
-                            
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
-                                tmp_vid.write(r.content)
-                                local_path = tmp_vid.name
+                        # --- PATH A: VIDEO (NEW SYSTEM) ---
+                        if is_video:
+                            with st.spinner(f"🚀 Uploading to YouTube (Timed for {target_dt})..."):
+                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                                r = requests.get(dl_link)
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
+                                    tmp_vid.write(r.content); local_path = tmp_vid.name
 
-                            # 2. Upload with Schedule (Private until target time)
-                            yt_link = upload_to_youtube_direct(
-                                local_path, 
-                                title="Ghost Dimension Evidence", 
-                                description=cap,
-                                scheduled_time=target_dt
-                            )
-                            
-                            os.remove(local_path) # Clean up temp file
+                                yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, target_dt)
+                                os.remove(local_path)
 
-                            if yt_link:
-                                st.balloons()
-                                st.success(f"✅ DONE! Video on YouTube (Private) until {target_dt}")
-                                # Update DB to 'posted' because the job is technically done
-                                supabase.table("social_posts").update({
-                                    "status": "posted", 
-                                    "image_url": yt_link,
-                                    "scheduled_time": str(target_dt)
-                                }).eq("id", p['id']).execute()
-                                st.rerun()
+                                if yt_link:
+                                    yt_id = yt_link.split("/")[-1]
+                                    st.balloons()
+                                    supabase.table("social_posts").update({
+                                        "status": "posted", "image_url": yt_link, "platform_post_id": yt_id, "scheduled_time": str(target_dt)
+                                    }).eq("id", p['id']).execute()
+                                    st.rerun()
+                        
+                        # --- PATH B: IMAGE (OLD SYSTEM - MAKE.COM) ---
+                        else:
+                            # Just update DB. Make will find it in Dropbox later.
+                            supabase.table("social_posts").update({
+                                "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+                            st.toast("✅ Image Scheduled! Make will pick this up.")
+                            st.rerun()
 
-                # 🚀 POST NOW (DIRECT NATIVE)
+                # 🚀 POST NOW BUTTON
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
-                        with st.spinner("🚀 Uploading Immediate..."):
-                            # 1. Download
-                            dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
-                            r = requests.get(dl_link)
-                            
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
-                                tmp_vid.write(r.content)
-                                local_path = tmp_vid.name
+                        
+                        # --- PATH A: VIDEO (NEW SYSTEM) ---
+                        if is_video:
+                            with st.spinner("🚀 Uploading to YouTube..."):
+                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                                r = requests.get(dl_link)
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
+                                    tmp_vid.write(r.content); local_path = tmp_vid.name
 
-                            # 2. Upload Immediate (No time = Immediate Private)
-                            yt_link = upload_to_youtube_direct(
-                                local_path, 
-                                title="Ghost Dimension Evidence", 
-                                description=cap,
-                                scheduled_time=None 
-                            )
-                            
-                            os.remove(local_path)
+                                yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, None)
+                                os.remove(local_path)
 
-                            if yt_link:
-                                st.balloons()
-                                st.success(f"✅ LIVE! Link: {yt_link}")
-                                supabase.table("social_posts").update({
-                                    "status": "posted", 
-                                    "image_url": yt_link,
-                                    "scheduled_time": datetime.now().isoformat()
-                                }).eq("id", p['id']).execute()
-                                st.rerun()
+                                if yt_link:
+                                    yt_id = yt_link.split("/")[-1]
+                                    st.balloons()
+                                    supabase.table("social_posts").update({
+                                        "status": "posted", "image_url": yt_link, "platform_post_id": yt_id, "scheduled_time": datetime.now().isoformat()
+                                    }).eq("id", p['id']).execute()
+                                    st.rerun()
+
+                        # --- PATH B: IMAGE (OLD SYSTEM - WAKE UP MAKE) ---
+                        else:
+                            st.spinner("Waking up the Robot...")
+                            # 1. Update DB
+                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                            supabase.table("social_posts").update({
+                                "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+                            
+                            # 2. Trigger Make (Restored your old code)
+                            try:
+                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                api_token = st.secrets["MAKE_API_TOKEN"]
+                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                headers = {"Authorization": f"Token {api_token}"}
+                                mk_resp = requests.post(url, headers=headers)
+                                if mk_resp.status_code == 200: st.success("🤖 Robot Woken Up!")
+                                else: st.warning(f"Robot Code: {mk_resp.status_code}")
+                            except Exception as e: st.error(f"Make Error: {e}")
+                            st.rerun()
 
                 # 🗑️ DISCARD
                 with b_col3:
                     if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
-                        supabase.table("social_posts").delete().eq("id", p['id']).execute()
-                        st.rerun()
+                        supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
                         
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
@@ -953,6 +966,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
