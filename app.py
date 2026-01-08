@@ -108,7 +108,25 @@ def scrape_website(url):
 def get_brand_knowledge():
     response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
     return "\n".join([f"- {i['fact_summary']}" for i in response.data]) if response.data else ""
+    
+def generate_viral_title(caption):
+    """Generates a high-CTR YouTube Shorts title under 100 chars."""
+    try:
+        # SAFE VERSION: No triple quotes to prevent syntax errors
+        prompt = "You are a master YouTube strategist. Create a viral, high-CTR title for the horror niche.\n"
+        prompt += "Rules:\n1. NO brand names.\n2. Use psychological triggers.\n3. Use ALL CAPS for key scary words.\n"
+        prompt += "4. Must be under 100 characters.\n5. No hashtags.\n6. Do not use quotes.\n"
+        prompt += f"Transform this caption into a title: '{caption}'"
 
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        title = resp.choices[0].message.content.strip().replace('"', '')
+        return title[:100] 
+    except:
+        return "GHOST DIMENSION EVIDENCE caught on camera"
+        
 def save_ai_image_to_storage(image_bytes):
     try:
         filename = f"nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
@@ -866,33 +884,38 @@ with d1:
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner(f"🚀 Step 1: Uploading to YouTube..."):
-                                # 1. Download from Dropbox to Temp
+                            # 1. Generate Viral Title
+                            with st.spinner("🧠 AI generating viral title..."):
+                                yt_title = generate_viral_title(cap)
+                                st.toast(f"Title: {yt_title}")
+
+                            with st.spinner(f"🚀 Step 2: Uploading to YouTube..."):
+                                # 2. Download from Dropbox to Temp
                                 dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
-                                # 2. Upload to YouTube (Private Scheduled)
-                                yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, target_dt)
+                                # 3. Upload to YouTube (Private Scheduled)
+                                # USES: AI Title for Headline, Original Caption for Description
+                                yt_link = upload_to_youtube_direct(local_path, yt_title, cap, target_dt)
                                 os.remove(local_path)
 
                                 if yt_link:
                                     yt_id = yt_link.split("/")[-1]
-                                    st.success(f"✅ YouTube Done! ID: {yt_id}")
+                                    st.success(f"✅ YouTube Done! Title: {yt_title}")
                                     
-                                    # 3. Update DB for MAKE (Keep Dropbox Link!)
+                                    # 4. Update DB for MAKE (Keep Original Caption for FB/Insta!)
                                     supabase.table("social_posts").update({
-                                        "status": "scheduled",          # Keep as SCHEDULED for Make
-                                        "caption": cap,
-                                        "platform_post_id": yt_id,      # Save YT ID for Analytics
+                                        "status": "scheduled",
+                                        "caption": cap,             # <--- Keeps original caption for Insta
+                                        "platform_post_id": yt_id,
                                         "scheduled_time": str(target_dt)
-                                        # Note: We do NOT overwrite image_url yet, Make needs the Dropbox link!
                                     }).eq("id", p['id']).execute()
                                     
                                     st.toast("🤖 Waking up Make for FB/Insta...")
                                     
-                                    # 4. Trigger Make
+                                    # 5. Trigger Make
                                     try:
                                         scenario_id = st.secrets["MAKE_SCENARIO_ID"]
                                         api_token = st.secrets["MAKE_API_TOKEN"]
@@ -917,25 +940,30 @@ with d1:
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner("🚀 Step 1: Uploading to YouTube..."):
+                            # 1. Generate Viral Title
+                            with st.spinner("🧠 AI generating viral title..."):
+                                yt_title = generate_viral_title(cap)
+                                st.toast(f"Title: {yt_title}")
+
+                            with st.spinner("🚀 Step 2: Uploading to YouTube..."):
                                 dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
                                 # Upload Immediate
-                                yt_link = upload_to_youtube_direct(local_path, "Ghost Dimension Evidence", cap, None)
+                                yt_link = upload_to_youtube_direct(local_path, yt_title, cap, None)
                                 os.remove(local_path)
 
                                 if yt_link:
                                     yt_id = yt_link.split("/")[-1]
-                                    st.success(f"✅ YouTube Live! ID: {yt_id}")
+                                    st.success(f"✅ YouTube Live! Title: {yt_title}")
                                     
                                     # Update DB for MAKE
                                     supabase.table("social_posts").update({
-                                        "status": "scheduled",       # Make needs to see 'scheduled' to act
+                                        "status": "scheduled",
                                         "caption": cap,
-                                        "platform_post_id": yt_id,   # Save ID
+                                        "platform_post_id": yt_id,
                                         "scheduled_time": now_utc
                                     }).eq("id", p['id']).execute()
                                     
@@ -1016,6 +1044,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
