@@ -19,6 +19,9 @@ import os
 import subprocess
 import tempfile
 import dropbox #
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -112,11 +115,111 @@ def save_ai_image_to_storage(image_bytes):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(image_bytes)
             tmp_path = tmp.name
-        url = upload_to_social_system(tmp_path, filename) #
+        url = upload_to_social_system(tmp_path, filename) 
         os.remove(tmp_path)
         return url
     except Exception as e:
         st.error(f"Image Save failed: {e}"); return None
+
+# --- MOVED TO LEFT MARGIN (GLOBAL SCOPE) ---
+def upload_to_youtube_direct(video_path, title, description, scheduled_time=None):
+    """
+    Uploads directly to YouTube using local keys. 
+    Handles both Immediate and Scheduled uploads.
+    """
+    try:
+        # 1. Rebuild Credentials
+        creds = Credentials(
+            token=st.secrets["YOUTUBE_TOKEN"],
+            refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+            client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+            scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
+        )
+        youtube = build('youtube', 'v3', credentials=creds)
+
+        # 2. Configure Logic
+        if scheduled_time:
+            publish_at = scheduled_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            privacy = "private"
+        else:
+            publish_at = None
+            privacy = "private"
+
+        # 3. Metadata
+        body = {
+            'snippet': {
+                'title': title,
+                'description': description,
+                'tags': ['Ghost Dimension', 'Paranormal'],
+                'categoryId': '22'
+            },
+            'status': {
+                'privacyStatus': privacy,
+                'selfDeclaredMadeForKids': False
+            }
+        }
+        if publish_at:
+            body['status']['publishAt'] = publish_at
+
+        # 4. Upload
+        media = MediaFileUpload(video_path, chunksize=1024*1024, resumable=True)
+        request = youtube.videos().insert(
+            part=','.join(body.keys()),
+            body=body,
+            media_body=media
+        )
+        
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+        
+        return f"https://youtu.be/{response['id']}"
+
+    except Exception as e:
+        st.error(f"YouTube Upload Failed: {e}")
+        return None
+
+def update_youtube_stats():
+    """Fetches Views/Likes for all posted videos and updates Supabase."""
+    posts = supabase.table("social_posts").select("id, image_url").eq("status", "posted").ilike("image_url", "%youtu%").execute().data
+    if not posts: return "No YouTube videos found."
+
+    # Map Video IDs
+    video_map = {}
+    for p in posts:
+        vid_id = p['image_url'].split("/")[-1].replace("watch?v=", "")
+        video_map[vid_id] = p['id']
+    
+    video_ids = list(video_map.keys())
+
+    creds = Credentials(
+        token=st.secrets["YOUTUBE_TOKEN"],
+        refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+        client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+        scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
+    )
+    youtube = build('youtube', 'v3', credentials=creds)
+
+    count = 0
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i+50]
+        res = youtube.videos().list(part="statistics", id=','.join(batch)).execute()
+
+        for item in res.get("items", []):
+            stats = item['statistics']
+            db_id = video_map.get(item['id'])
+            if db_id:
+                supabase.table("social_posts").update({
+                    "views": int(stats.get('viewCount', 0)),
+                    "likes": int(stats.get('likeCount', 0)),
+                    "comments": int(stats.get('commentCount', 0))
+                }).eq("id", db_id).execute()
+                count += 1
+    return f"✅ Synced {count} videos."
 
 def generate_random_ghost_topic():
     knowledge = get_brand_knowledge()
@@ -195,6 +298,7 @@ def process_reel(video_url, start_time_sec, duration, effect, output_filename):
         err_msg = e.stderr.decode() if e.stderr else str(e)
         st.error(f"Render Failed. FFmpeg Error: {err_msg}")
         return False
+        
 
 # --- DROPBOX HELPERS ---
 def get_video_duration(video_url):
@@ -603,10 +707,17 @@ with tab_video_vault:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
-    st.subheader("📈 The Feedback Loop")
+    c_head, c_btn = st.columns([3, 1])
+    with c_head:
+        st.subheader("📈 The Feedback Loop")
+    with c_btn:
+        if st.button("🔄 SYNC YOUTUBE STATS"):
+            with st.spinner("Asking YouTube for latest numbers..."):
+                res = update_youtube_stats()
+                st.success(res)
+                st.rerun()
     
-    # 1. FETCH DATA (Only posts that have stats)
-    # We look at the last 50 posted items to get a good trend
+    # 1. FETCH DATA... (keep the rest of your existing code here)
     history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(50).execute().data
     
     if len(history) > 0:
@@ -689,6 +800,9 @@ with d1:
     # 1. Fetch Drafts
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").order("created_at", desc=True).execute().data
     
+    if not drafts:
+        st.info("No drafts found. Generate some content in the Nano Generator!")
+
     for idx, p in enumerate(drafts):
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
@@ -703,78 +817,96 @@ with d1:
             
             # --- RIGHT COLUMN: CONTROLS ---
             with col2:
-                # Caption
+                # Caption Editor
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
                 
-                # --- 🧠 SMART CLOCK LOGIC (FIXED) ---
+                # --- 🧠 SMART CLOCK LOGIC ---
                 # 1. Pick Date
                 din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
                 
-                # 2. Get Strategy
+                # 2. Get Strategy (Best time for that day)
                 best_time = get_best_time_for_day(din)
                 
-                # 3. Set Time (Crucial Fix: Key depends on Date 'din')
-                # This forces Streamlit to redraw the widget when the date changes
+                # 3. Set Time
                 tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}_{din}")
                 # ------------------------------------
                 
-                # Buttons
+                # ACTION BUTTONS
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # 📅 SCHEDULE
+                # 📅 SCHEDULE (DIRECT NATIVE)
                 with b_col1:
-                    if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
-                        supabase.table("social_posts").update({
-                            "caption": cap, 
-                            "scheduled_time": f"{din} {tin}", 
-                            "status": "scheduled"
-                        }).eq("id", p['id']).execute()
+                    if st.button("📅 Schedule Upload", key=f"s_{p['id']}_{idx}"):
+                        target_dt = datetime.combine(din, tin)
                         
-                        try:
-                            supabase.table("uploaded_images").update({
-                                "last_used_at": datetime.now().isoformat()
-                            }).eq("file_url", p['image_url']).execute()
-                        except Exception as e:
-                            print(f"Update failed: {e}")
-                        st.rerun()
+                        with st.spinner(f"🚀 Uploading to YouTube (Timed for {target_dt})..."):
+                            # 1. Download from Dropbox to Temp (Convert to direct link)
+                            dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                            r = requests.get(dl_link)
+                            
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
+                                tmp_vid.write(r.content)
+                                local_path = tmp_vid.name
 
-                # 🚀 POST NOW
+                            # 2. Upload with Schedule (Private until target time)
+                            yt_link = upload_to_youtube_direct(
+                                local_path, 
+                                title="Ghost Dimension Evidence", 
+                                description=cap,
+                                scheduled_time=target_dt
+                            )
+                            
+                            os.remove(local_path) # Clean up temp file
+
+                            if yt_link:
+                                st.balloons()
+                                st.success(f"✅ DONE! Video on YouTube (Private) until {target_dt}")
+                                # Update DB to 'posted' because the job is technically done
+                                supabase.table("social_posts").update({
+                                    "status": "posted", 
+                                    "image_url": yt_link,
+                                    "scheduled_time": str(target_dt)
+                                }).eq("id", p['id']).execute()
+                                st.rerun()
+
+                # 🚀 POST NOW (DIRECT NATIVE)
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
-                        try:
-                            now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                            supabase.table("social_posts").update({
-                                "caption": cap,
-                                "scheduled_time": now_utc,
-                                "status": "scheduled"
-                            }).eq("id", p['id']).execute()
+                        with st.spinner("🚀 Uploading Immediate..."):
+                            # 1. Download
+                            dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                            r = requests.get(dl_link)
+                            
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
+                                tmp_vid.write(r.content)
+                                local_path = tmp_vid.name
 
-                            st.toast("✅ Database updated! Waking up the robot...")
+                            # 2. Upload Immediate (No time = Immediate Private)
+                            yt_link = upload_to_youtube_direct(
+                                local_path, 
+                                title="Ghost Dimension Evidence", 
+                                description=cap,
+                                scheduled_time=None 
+                            )
+                            
+                            os.remove(local_path)
 
-                            # Trigger Make
-                            try:
-                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
-                                api_token = st.secrets["MAKE_API_TOKEN"]
-                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                                headers = {"Authorization": f"Token {api_token}"}
-                                mk_resp = requests.post(url, headers=headers)
-                                if mk_resp.status_code == 200:
-                                    st.success("🤖 Robot Woken Up!")
-                                else:
-                                    st.warning(f"Robot Code: {mk_resp.status_code}")
-                            except Exception as e:
-                                st.error(f"Make Error: {e}")
-                            st.balloons()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"DB Error: {e}")
+                            if yt_link:
+                                st.balloons()
+                                st.success(f"✅ LIVE! Link: {yt_link}")
+                                supabase.table("social_posts").update({
+                                    "status": "posted", 
+                                    "image_url": yt_link,
+                                    "scheduled_time": datetime.now().isoformat()
+                                }).eq("id", p['id']).execute()
+                                st.rerun()
 
                 # 🗑️ DISCARD
                 with b_col3:
                     if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute()
-                        st.toast("🗑️ Discarded")
                         st.rerun()
+                        
 with d2:
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
     for p in sch:
@@ -821,6 +953,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
