@@ -163,7 +163,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
             privacy = "private"
         else:
             publish_at = None
-            privacy = "private"
+            privacy = "public"
 
         # 3. Metadata
         body = {
@@ -1044,6 +1044,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
