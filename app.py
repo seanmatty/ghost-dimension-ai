@@ -629,15 +629,15 @@ with tab_upload:
                 supabase.table("uploaded_images").insert({"file_url": url, "filename": fname, "media_type": "image"}).execute()
                 st.success("Saved!"); st.rerun()
     
-   with c_lib:
-       st.subheader("2. Image Library (Photos Only)")
-       
-       # --- 🛠️ THIS FIXES YOUR ERROR ---
-       u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
-       # ------------------------------
+    with c_lib:
+        st.subheader("2. Image Library (Photos Only)")
+        
+        # --- 🛠️ THIS FIXES YOUR ERROR ---
+        u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
+        # ------------------------------
 
-       # FIX: Added .eq("media_type", "image") so videos don't show up here
-       lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
+        # FIX: Added .eq("media_type", "image") so videos don't show up here
+        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
         
         if lib:
             cols = st.columns(3)
@@ -687,7 +687,7 @@ with tab_upload:
                                 st.success("Draft Created!"); st.rerun()
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
-
+                            
 # --- TAB 3: DROPBOX LAB ---
 with tab_dropbox:
     st.subheader("🎥 Source Material Processor")
@@ -1119,6 +1119,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
