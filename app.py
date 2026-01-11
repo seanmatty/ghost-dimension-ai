@@ -99,19 +99,32 @@ def get_best_time_for_day(target_date):
 # --- ADD THIS AFTER get_and_refresh_token ---
 def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
     """
-    Directly posts/schedules using the Permanent Page Token.
-    Simplified: No more token swapping or refreshing needed! 🚀
+    Uses the System User Token (Bot) to fetch the Page Token, 
+    then posts to FB & Insta. 
     """
-    # 1. Load Credentials directly
-    # Since you saved the "Never Expire" key, we use it directly.
-    final_token = st.secrets["META_ACCESS_TOKEN"] 
+    # 1. Load the System User Token (The "Master Key")
+    system_token = st.secrets["META_ACCESS_TOKEN"] 
     fb_page_id = st.secrets["FB_PAGE_ID"]
     ig_user_id = st.secrets["IG_USER_ID"]
     
-    # 2. Config Timing
+    # 2. THE CRITICAL SWAP 🔄
+    # We exchange the Bot's ID for the Page's "Posting Key"
+    try:
+        swap_url = f"https://graph.facebook.com/v24.0/{fb_page_id}?fields=access_token&access_token={system_token}"
+        r_swap = requests.get(swap_url)
+        
+        if r_swap.status_code == 200:
+            final_token = r_swap.json().get('access_token')
+        else:
+            return f"❌ Token Swap Failed: {r_swap.json().get('error', {}).get('message')}"
+    except Exception as e:
+        return f"❌ Connection Error during swap: {e}"
+
+    # 3. Config Timing
     publish_mode = {}
     if scheduled_time:
         unix_time = int(scheduled_time.timestamp())
+        # Check if time is too close (Meta requires >10 mins notice usually)
         if unix_time - datetime.now().timestamp() < 900: 
             st.warning("⚠️ Time too close! Posting immediately instead of scheduling.")
         else:
@@ -119,17 +132,17 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
     
     results = []
     
-    # Ensure URL is direct link
+    # Ensure URL is direct link (Dropbox fix)
     if "dropbox.com" in media_url:
         media_url = media_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
 
     # --- A. FACEBOOK POSTING ---
     try:
         if not is_video: # Photo
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/photos"
+            fb_url = f"https://graph.facebook.com/v24.0/{fb_page_id}/photos"
             payload = {"url": media_url, "message": caption, "access_token": final_token}
         else: # Video
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/videos"
+            fb_url = f"https://graph.facebook.com/v24.0/{fb_page_id}/videos"
             payload = {"file_url": media_url, "description": caption, "access_token": final_token}
         
         payload.update(publish_mode)
@@ -143,8 +156,8 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
 
     # --- B. INSTAGRAM POSTING ---
     try:
-        ig_url_create = f"https://graph.facebook.com/v19.0/{ig_user_id}/media"
-        ig_url_publish = f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish"
+        ig_url_create = f"https://graph.facebook.com/v24.0/{ig_user_id}/media"
+        ig_url_publish = f"https://graph.facebook.com/v24.0/{ig_user_id}/media_publish"
         
         payload = {"caption": caption, "access_token": final_token}
         payload.update(publish_mode)
@@ -160,13 +173,13 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
         if r_cont.status_code == 200:
             container_id = r_cont.json()['id']
             
-            # Step 1.5: Wait for Video Processing (Crucial for Reels)
+            # Step 1.5: Wait for Video Processing
             if is_video:
                 status = "IN_PROGRESS"
                 while status != "FINISHED":
                     import time
-                    time.sleep(5) # Wait 5s between checks
-                    stat_check = requests.get(f"https://graph.facebook.com/v19.0/{container_id}", 
+                    time.sleep(5) 
+                    stat_check = requests.get(f"https://graph.facebook.com/v24.0/{container_id}", 
                                             params={"fields": "status_code", "access_token": final_token})
                     status = stat_check.json().get('status_code', 'ERROR')
                     if status == "ERROR": break
@@ -1071,6 +1084,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
