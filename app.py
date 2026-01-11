@@ -96,107 +96,6 @@ def get_best_time_for_day(target_date):
     response = supabase.table("strategy").select("best_hour").eq("day", day_name).execute()
     return time(response.data[0]['best_hour'], 0) if response.data else time(20, 0)
 
-# --- ADD THIS AFTER get_and_refresh_token ---
-def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
-    """
-    Final Fix Strategy:
-    - Uses v19.0 (Stable) instead of v24.0
-    - Uses the Swapped PAGE TOKEN for both FB and Insta
-    """
-    # 1. Load the System User Token (Bot)
-    system_token = st.secrets["META_ACCESS_TOKEN"] 
-    fb_page_id = st.secrets["FB_PAGE_ID"]
-    ig_user_id = st.secrets["IG_USER_ID"]
-    
-    # 2. SWAP: Get the PAGE Token (The one that works for FB)
-    fb_token = system_token # Fallback
-    try:
-        # We use the Bot token to ask for the Page's "Acting Key"
-        swap_url = f"https://graph.facebook.com/v19.0/{fb_page_id}?fields=access_token&access_token={system_token}"
-        r_swap = requests.get(swap_url)
-        if r_swap.status_code == 200:
-            fb_token = r_swap.json().get('access_token')
-            # print(f"🔑 Swap Success! Using Page Token: {fb_token[:10]}...")
-        else:
-            print(f"⚠️ Swap Warning: {r_swap.json()}")
-    except Exception as e:
-        print(f"⚠️ Swap Error: {e}")
-
-    # 3. Config Timing
-    publish_mode = {}
-    if scheduled_time:
-        unix_time = int(scheduled_time.timestamp())
-        if unix_time - datetime.now().timestamp() < 900: 
-            st.warning("⚠️ Time too close! Posting immediately instead of scheduling.")
-        else:
-            publish_mode = {"published": "false", "scheduled_publish_time": unix_time}
-    
-    results = []
-    
-    # Dropbox URL Cleaner
-    if "dropbox.com" in media_url:
-        media_url = media_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
-
-    # --- A. FACEBOOK POSTING (v19.0) ---
-    try:
-        if not is_video: 
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/photos"
-            payload = {"url": media_url, "message": caption, "access_token": fb_token}
-        else: 
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/videos"
-            payload = {"file_url": media_url, "description": caption, "access_token": fb_token}
-        
-        payload.update(publish_mode)
-        r_fb = requests.post(fb_url, params=payload)
-        
-        if r_fb.status_code == 200: 
-            results.append("✅ FB Success")
-        else: 
-            results.append(f"❌ FB Fail: {r_fb.json().get('error', {}).get('message')}")
-    except Exception as e: results.append(f"❌ FB Error: {e}")
-
-    # --- B. INSTAGRAM POSTING (v19.0 + Page Token) ---
-    try:
-        ig_url_create = f"https://graph.facebook.com/v19.0/{ig_user_id}/media"
-        ig_url_publish = f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish"
-        
-        # We use fb_token (The Page Token) here, NOT system_token
-        payload = {"caption": caption, "access_token": fb_token}
-        payload.update(publish_mode)
-        
-        if is_video:
-            payload.update({"media_type": "REELS", "video_url": media_url})
-        else:
-            payload.update({"image_url": media_url})
-            
-        # Step 1: Create Container
-        r_cont = requests.post(ig_url_create, params=payload)
-        
-        if r_cont.status_code == 200:
-            container_id = r_cont.json()['id']
-            
-            # Step 1.5: Wait for Video Processing
-            if is_video:
-                status = "IN_PROGRESS"
-                while status != "FINISHED":
-                    import time
-                    time.sleep(5) 
-                    stat_check = requests.get(f"https://graph.facebook.com/v19.0/{container_id}", 
-                                            params={"fields": "status_code", "access_token": fb_token})
-                    status = stat_check.json().get('status_code', 'ERROR')
-                    if status == "ERROR": break
-            
-            # Step 2: Publish Container
-            r_pub = requests.post(ig_url_publish, params={"creation_id": container_id, "access_token": fb_token})
-            
-            if r_pub.status_code == 200: results.append("✅ Insta Success")
-            else: results.append(f"❌ Insta Publish Fail: {r_pub.json()}")
-        else:
-            results.append(f"❌ Insta Container Fail: {r_cont.json()}")
-    except Exception as e: results.append(f"❌ Insta Error: {e}")
-
-    return " | ".join(results)
-    
 def scrape_website(url):
     if not url.startswith("http"): url = "https://" + url
     try:
@@ -598,11 +497,6 @@ with tab_upload:
     
     with c_lib:
         st.subheader("2. Image Library (Photos Only)")
-        
-        # --- 🛠️ THIS FIXES YOUR ERROR ---
-        u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
-        # ------------------------------
-
         # FIX: Added .eq("media_type", "image") so videos don't show up here
         lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
         
@@ -654,7 +548,7 @@ with tab_upload:
                                 st.success("Draft Created!"); st.rerun()
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
-                            
+
 # --- TAB 3: DROPBOX LAB ---
 with tab_dropbox:
     st.subheader("🎥 Source Material Processor")
@@ -955,87 +849,151 @@ d1, d2, d3 = st.tabs(["📝 DRAFTS", "📅 SCHEDULED", "📜 HISTORY"])
 with d1:
     # 1. Fetch Drafts
     drafts = supabase.table("social_posts").select("*").eq("status", "draft").order("created_at", desc=True).execute().data
+    
     if not drafts: st.info("No drafts found.")
 
     for idx, p in enumerate(drafts):
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
+            
+            # --- DETECT MEDIA TYPE ---
             is_video = ".mp4" in p['image_url'] or "youtu" in p['image_url']
             
+            # --- LEFT: PREVIEW ---
             with col1: 
-                if is_video: st.video(p['image_url']); st.caption("🎥 VIDEO")
-                else: st.image(p['image_url'], use_container_width=True); st.caption("📸 PHOTO")
+                if is_video: 
+                    st.video(p['image_url']); st.caption("🎥 VIDEO REEL")
+                else: 
+                    st.image(p['image_url'], use_container_width=True); st.caption("📸 PHOTO POST")
             
+            # --- RIGHT: CONTROLS ---
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
+                
+                # Smart Clock
                 din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
                 best_time = get_best_time_for_day(din)
                 tin = st.time_input("Time", value=best_time, key=f"tm_{p['id']}_{idx}_{din}")
+                
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
-                # --- 📅 NATIVE SCHEDULE ---
+                # 📅 SCHEDULE BUTTON
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         target_dt = datetime.combine(din, tin)
                         
-                        # A. YOUTUBE (Video Only)
-                        yt_id = None
+                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner("🚀 Uploading to YouTube..."):
+                            # 1. Generate Viral Title
+                            with st.spinner("🧠 AI generating viral title..."):
                                 yt_title = generate_viral_title(cap)
-                                # Clean Dropbox link for YouTube
-                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+                                st.toast(f"Title: {yt_title}")
+
+                            with st.spinner(f"🚀 Step 2: Uploading to YouTube..."):
+                                # 2. Download from Dropbox to Temp
+                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
+
+                                # 3. Upload to YouTube (Private Scheduled)
+                                # USES: AI Title for Headline, Original Caption for Description
                                 yt_link = upload_to_youtube_direct(local_path, yt_title, cap, target_dt)
                                 os.remove(local_path)
-                                if yt_link: yt_id = yt_link.split("/")[-1]
 
-                        # B. META (FB/INSTA) - Native
-                        with st.spinner("🚀 Scheduling on Meta..."):
-                            # Clean Dropbox link for Meta
-                            meta_dl = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
-                            meta_res = post_to_meta_native(meta_dl, cap, is_video, target_dt)
+                                if yt_link:
+                                    yt_id = yt_link.split("/")[-1]
+                                    st.success(f"✅ YouTube Done! Title: {yt_title}")
+                                    
+                                    # 4. Update DB for MAKE (Keep Original Caption for FB/Insta!)
+                                    supabase.table("social_posts").update({
+                                        "status": "scheduled",
+                                        "caption": cap,             # <--- Keeps original caption for Insta
+                                        "platform_post_id": yt_id,
+                                        "scheduled_time": str(target_dt)
+                                    }).eq("id", p['id']).execute()
+                                    
+                                    st.toast("🤖 Waking up Make for FB/Insta...")
+                                    
+                                    # 5. Trigger Make
+                                    try:
+                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                        api_token = st.secrets["MAKE_API_TOKEN"]
+                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                        headers = {"Authorization": f"Token {api_token}"}
+                                        requests.post(url, headers=headers)
+                                    except: pass
+                                    st.rerun()
                         
-                        st.success(f"Done! {meta_res}")
-                        supabase.table("social_posts").update({
-                            "status": "scheduled",
-                            "platform_post_id": yt_id if yt_id else "meta_scheduled",
-                            "scheduled_time": str(target_dt)
-                        }).eq("id", p['id']).execute()
-                        st.rerun()
+                        # --- PATH B: IMAGE (STANDARD MAKE) ---
+                        else:
+                            supabase.table("social_posts").update({
+                                "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+                            st.toast("✅ Image Scheduled! Make will pick this up.")
+                            st.rerun()
 
-                # --- 🚀 NATIVE POST NOW ---
+                # 🚀 POST NOW BUTTON
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
-                        # A. YOUTUBE (Video Only)
-                        yt_id = None
+                        now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
-                            with st.spinner("🚀 Uploading to YouTube..."):
+                            # 1. Generate Viral Title
+                            with st.spinner("🧠 AI generating viral title..."):
                                 yt_title = generate_viral_title(cap)
-                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+                                st.toast(f"Title: {yt_title}")
+
+                            with st.spinner("🚀 Step 2: Uploading to YouTube..."):
+                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
                                 r = requests.get(dl_link)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
+
+                                # Upload Immediate
                                 yt_link = upload_to_youtube_direct(local_path, yt_title, cap, None)
                                 os.remove(local_path)
-                                if yt_link: yt_id = yt_link.split("/")[-1]
 
-                        # B. META (FB/INSTA) - Native
-                        with st.spinner("🚀 Posting to Meta..."):
-                            meta_dl = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
-                            # Sending None for scheduled_time means "Post Now"
-                            meta_res = post_to_meta_native(meta_dl, cap, is_video, None)
+                                if yt_link:
+                                    yt_id = yt_link.split("/")[-1]
+                                    st.success(f"✅ YouTube Live! Title: {yt_title}")
+                                    
+                                    # Update DB for MAKE
+                                    supabase.table("social_posts").update({
+                                        "status": "scheduled",
+                                        "caption": cap,
+                                        "platform_post_id": yt_id,
+                                        "scheduled_time": now_utc
+                                    }).eq("id", p['id']).execute()
+                                    
+                                    # Wake Make
+                                    try:
+                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                        api_token = st.secrets["MAKE_API_TOKEN"]
+                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                        headers = {"Authorization": f"Token {api_token}"}
+                                        requests.post(url, headers=headers)
+                                    except: pass
+                                    st.rerun()
 
-                        st.success(f"Live! {meta_res}")
-                        supabase.table("social_posts").update({
-                            "status": "posted",
-                            "platform_post_id": yt_id if yt_id else "meta_live",
-                            "scheduled_time": datetime.now().isoformat()
-                        }).eq("id", p['id']).execute()
-                        st.rerun()
+                        # --- PATH B: IMAGE (STANDARD MAKE) ---
+                        else:
+                            st.spinner("Waking up the Robot...")
+                            supabase.table("social_posts").update({
+                                "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
+                            }).eq("id", p['id']).execute()
+                            
+                            try:
+                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
+                                api_token = st.secrets["MAKE_API_TOKEN"]
+                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
+                                headers = {"Authorization": f"Token {api_token}"}
+                                requests.post(url, headers=headers)
+                            except: pass
+                            st.rerun()
 
+                # 🗑️ DISCARD
                 with b_col3:
                     if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
@@ -1086,13 +1044,6 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
-
-
-
-
-
-
-
 
 
 
