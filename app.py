@@ -146,102 +146,116 @@ def get_and_refresh_token():
             
     return current_token
 
-# --- ADD THIS AFTER get_and_refresh_token ---
+# --- 5. Meta (Split Brain) Uploader ---
 def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
     """
-    Directly posts/schedules to Facebook & Instagram using Graph API.
-    Now includes TOKEN SWAP to fix (#200) Permission Error.
+    Hybrid Poster:
+    - Facebook: Uses the Standard Graph API (User -> Page Token Swap).
+    - Instagram: Uses the NEW Specific App Credentials.
     """
-    # 1. Load Credentials
-    user_token = get_and_refresh_token() # <--- This is YOU
-    fb_page_id = st.secrets["FB_PAGE_ID"]
-    ig_user_id = st.secrets["IG_USER_ID"]
     
-    # 2. SWAP USER TOKEN FOR PAGE TOKEN (The Fix) 🛠️
-    # We ask FB: "I am the Admin, give me the key to act AS THE PAGE"
-    final_token = user_token # Default to user token if swap fails
-    try:
-        swap_url = f"https://graph.facebook.com/v19.0/{fb_page_id}?fields=access_token&access_token={user_token}"
-        r_swap = requests.get(swap_url)
-        if r_swap.status_code == 200:
-            final_token = r_swap.json().get('access_token') # <--- We use THIS key now
-        else:
-            print(f"⚠️ Token Swap Warning: {r_swap.text}")
-    except Exception as e:
-        print(f"⚠️ Token Swap Error: {e}")
-
-    # 3. Config Timing
+    # --- COMMON SETUP ---
+    # Logic: 0 = Now, UNIX Timestamp = Schedule
     publish_mode = {}
     if scheduled_time:
         unix_time = int(scheduled_time.timestamp())
         if unix_time - datetime.now().timestamp() < 900: 
-            st.warning("⚠️ Time too close! Posting immediately instead of scheduling.")
+            st.warning("⚠️ Too close! Posting now.")
         else:
             publish_mode = {"published": "false", "scheduled_publish_time": unix_time}
-    
-    results = []
-    
-    # Ensure URL is direct link
+
+    # Clean URL (Dropbox Fix)
     if "dropbox.com" in media_url:
         media_url = media_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
 
-    # --- A. FACEBOOK POSTING ---
+    log = []
+
+    # ==========================================
+    # 📘 PART A: FACEBOOK (Old Reliable System)
+    # ==========================================
     try:
-        # Use final_token (The Page Key)
+        # 1. Get User Token
+        fb_user_token = get_and_refresh_token() 
+        fb_page_id = st.secrets["FB_PAGE_ID"]
+        
+        # 2. Swap for Page Token
+        fb_final_token = fb_user_token
+        try:
+            swap_url = f"https://graph.facebook.com/v19.0/{fb_page_id}?fields=access_token&access_token={fb_user_token}"
+            r_swap = requests.get(swap_url)
+            if r_swap.status_code == 200:
+                fb_final_token = r_swap.json().get('access_token')
+        except: pass
+
+        # 3. Post to FB
         if not is_video: # Photo
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/photos"
-            payload = {"url": media_url, "message": caption, "access_token": final_token}
+            url = f"https://graph.facebook.com/v19.0/{fb_page_id}/photos"
+            payload = {"url": media_url, "message": caption, "access_token": fb_final_token}
         else: # Video
-            fb_url = f"https://graph.facebook.com/v19.0/{fb_page_id}/videos"
-            payload = {"file_url": media_url, "description": caption, "access_token": final_token}
+            url = f"https://graph.facebook.com/v19.0/{fb_page_id}/videos"
+            payload = {"file_url": media_url, "description": caption, "access_token": fb_final_token}
         
         payload.update(publish_mode)
-        r_fb = requests.post(fb_url, params=payload)
+        r_fb = requests.post(url, params=payload)
         
-        if r_fb.status_code == 200: 
-            results.append("✅ FB Success")
-        else: 
-            results.append(f"❌ FB Fail: {r_fb.json().get('error', {}).get('message')}")
-    except Exception as e: results.append(f"❌ FB Error: {e}")
+        if r_fb.status_code == 200: log.append("✅ FB Success")
+        else: log.append(f"❌ FB Fail: {r_fb.json().get('error', {}).get('message')}")
+    except Exception as e: log.append(f"❌ FB Error: {e}")
 
-    # --- B. INSTAGRAM POSTING ---
+    # ==========================================
+    # 📸 PART B: INSTAGRAM (New Specific App)
+    # ==========================================
     try:
-        ig_url_create = f"https://graph.facebook.com/v19.0/{ig_user_id}/media"
-        ig_url_publish = f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish"
+        # 1. Load NEW Specific Credentials
+        ig_token = st.secrets["IG_SPECIFIC_TOKEN"]
+        ig_id = st.secrets["IG_SPECIFIC_ACCOUNT_ID"]
         
-        # Use final_token (The Page Key)
-        payload = {"caption": caption, "access_token": final_token}
+        # 2. Prepare Endpoint (We try the Standard Graph Endpoint first)
+        # Note: IGAA tokens are usually Basic Display (Read Only), but we will TRY to post.
+        base_url = "https://graph.facebook.com/v19.0" 
+        
+        url_c = f"{base_url}/{ig_id}/media"
+        url_p = f"{base_url}/{ig_id}/media_publish"
+        
+        payload = {"access_token": ig_token, "caption": caption}
         payload.update(publish_mode)
         
         if is_video:
             payload.update({"media_type": "REELS", "video_url": media_url})
         else:
             payload.update({"image_url": media_url})
-            
-        r_cont = requests.post(ig_url_create, params=payload)
+        
+        # 3. Create Container
+        r_cont = requests.post(url_c, params=payload)
         
         if r_cont.status_code == 200:
-            container_id = r_cont.json()['id']
-            # Wait for Video Processing
+            cont_id = r_cont.json()['id']
+            
+            # 4. Wait & Publish
             if is_video:
                 status = "IN_PROGRESS"
                 while status != "FINISHED":
                     import time
-                    time.sleep(5) # Wait 5s between checks
-                    stat_check = requests.get(f"https://graph.facebook.com/v19.0/{container_id}", 
-                                            params={"fields": "status_code", "access_token": final_token})
+                    time.sleep(5)
+                    stat_check = requests.get(f"{base_url}/{cont_id}", params={"fields": "status_code", "access_token": ig_token})
                     status = stat_check.json().get('status_code', 'ERROR')
                     if status == "ERROR": break
             
-            # Publish
-            r_pub = requests.post(ig_url_publish, params={"creation_id": container_id, "access_token": final_token})
-            if r_pub.status_code == 200: results.append("✅ Insta Success")
-            else: results.append(f"❌ Insta Publish Fail: {r_pub.json()}")
+            r_pub = requests.post(url_p, params={"creation_id": cont_id, "access_token": ig_token})
+            if r_pub.status_code == 200: log.append("✅ IG Success")
+            else: log.append(f"❌ IG Publish Fail: {r_pub.text}")
         else:
-            results.append(f"❌ Insta Container Fail: {r_cont.json()}")
-    except Exception as e: results.append(f"❌ Insta Error: {e}")
+            # 🚨 ERROR CATCHER for IGAA Tokens
+            err = r_cont.json()
+            msg = err.get('error', {}).get('message', '')
+            if "Invalid OAuth" in msg or "permissions" in msg:
+                log.append(f"❌ IG Token Type Error: Your 'IGAA' token might be Read-Only. ({msg})")
+            else:
+                log.append(f"❌ IG Container Fail: {msg}")
 
-    return " | ".join(results)
+    except Exception as e: log.append(f"❌ IG Error: {e}")
+
+    return " | ".join(log)
     
 def scrape_website(url):
     if not url.startswith("http"): url = "https://" + url
@@ -1132,6 +1146,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
