@@ -99,32 +99,32 @@ def get_best_time_for_day(target_date):
 # --- ADD THIS AFTER get_and_refresh_token ---
 def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
     """
-    Uses the System User Token (Bot) to fetch the Page Token, 
-    then posts to FB & Insta. 
+    Hybrid Strategy:
+    - Uses Page Token for Facebook (Fixes #200 error)
+    - Uses System User Token for Instagram (Fixes #3 whitelist error)
     """
-    # 1. Load the System User Token (The "Master Key")
+    # 1. Load the System User Token (The Bot Token)
     system_token = st.secrets["META_ACCESS_TOKEN"] 
     fb_page_id = st.secrets["FB_PAGE_ID"]
     ig_user_id = st.secrets["IG_USER_ID"]
     
-    # 2. THE CRITICAL SWAP 🔄
-    # We exchange the Bot's ID for the Page's "Posting Key"
+    # 2. Get the Page Token for Facebook
+    # We kept this because FB refused the Bot token earlier
+    fb_token = system_token # Default fallback
     try:
         swap_url = f"https://graph.facebook.com/v24.0/{fb_page_id}?fields=access_token&access_token={system_token}"
         r_swap = requests.get(swap_url)
-        
         if r_swap.status_code == 200:
-            final_token = r_swap.json().get('access_token')
+            fb_token = r_swap.json().get('access_token')
         else:
-            return f"❌ Token Swap Failed: {r_swap.json().get('error', {}).get('message')}"
+            print(f"⚠️ Swap Warning: {r_swap.json()}")
     except Exception as e:
-        return f"❌ Connection Error during swap: {e}"
+        print(f"⚠️ Swap Error: {e}")
 
     # 3. Config Timing
     publish_mode = {}
     if scheduled_time:
         unix_time = int(scheduled_time.timestamp())
-        # Check if time is too close (Meta requires >10 mins notice usually)
         if unix_time - datetime.now().timestamp() < 900: 
             st.warning("⚠️ Time too close! Posting immediately instead of scheduling.")
         else:
@@ -132,18 +132,19 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
     
     results = []
     
-    # Ensure URL is direct link (Dropbox fix)
+    # Dropbox URL Cleaner
     if "dropbox.com" in media_url:
         media_url = media_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
 
-    # --- A. FACEBOOK POSTING ---
+    # --- A. FACEBOOK POSTING (Uses PAGE Token) ---
     try:
-        if not is_video: # Photo
+        # NOTICE: We use fb_token here
+        if not is_video: 
             fb_url = f"https://graph.facebook.com/v24.0/{fb_page_id}/photos"
-            payload = {"url": media_url, "message": caption, "access_token": final_token}
-        else: # Video
+            payload = {"url": media_url, "message": caption, "access_token": fb_token}
+        else: 
             fb_url = f"https://graph.facebook.com/v24.0/{fb_page_id}/videos"
-            payload = {"file_url": media_url, "description": caption, "access_token": final_token}
+            payload = {"file_url": media_url, "description": caption, "access_token": fb_token}
         
         payload.update(publish_mode)
         r_fb = requests.post(fb_url, params=payload)
@@ -154,12 +155,14 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
             results.append(f"❌ FB Fail: {r_fb.json().get('error', {}).get('message')}")
     except Exception as e: results.append(f"❌ FB Error: {e}")
 
-    # --- B. INSTAGRAM POSTING ---
+    # --- B. INSTAGRAM POSTING (Uses SYSTEM USER Token) ---
     try:
         ig_url_create = f"https://graph.facebook.com/v24.0/{ig_user_id}/media"
         ig_url_publish = f"https://graph.facebook.com/v24.0/{ig_user_id}/media_publish"
         
-        payload = {"caption": caption, "access_token": final_token}
+        # NOTICE: We use system_token here (The one from secrets)
+        # This bypasses the Page Whitelist check that is blocking you
+        payload = {"caption": caption, "access_token": system_token}
         payload.update(publish_mode)
         
         if is_video:
@@ -180,12 +183,12 @@ def post_to_meta_native(media_url, caption, is_video, scheduled_time=None):
                     import time
                     time.sleep(5) 
                     stat_check = requests.get(f"https://graph.facebook.com/v24.0/{container_id}", 
-                                            params={"fields": "status_code", "access_token": final_token})
+                                            params={"fields": "status_code", "access_token": system_token})
                     status = stat_check.json().get('status_code', 'ERROR')
                     if status == "ERROR": break
             
             # Step 2: Publish Container
-            r_pub = requests.post(ig_url_publish, params={"creation_id": container_id, "access_token": final_token})
+            r_pub = requests.post(ig_url_publish, params={"creation_id": container_id, "access_token": system_token})
             
             if r_pub.status_code == 200: results.append("✅ Insta Success")
             else: results.append(f"❌ Insta Publish Fail: {r_pub.json()}")
@@ -1084,6 +1087,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
