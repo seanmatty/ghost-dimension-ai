@@ -651,7 +651,7 @@ with tab_dropbox:
 
 # B. PRECISION CUTTER
     elif tool_mode.startswith("⏱️"):
-        st.info("Step 1: Watch to find the time. Step 2: Drag slider to that time.")
+        st.info("Step 1: Watch video to find the time. Step 2: Enter Min/Sec below.")
         
         if "vid_duration" not in st.session_state: st.session_state.vid_duration = 0
         if "display_url" not in st.session_state: st.session_state.display_url = ""
@@ -668,21 +668,29 @@ with tab_dropbox:
             st.divider()
             st.write("✂️ **Cut Settings**")
             
-            start_ts = st.slider("Select Start Time (Scrub to cut point)", 0, st.session_state.vid_duration, 0, format="%d s")
-            st.caption(f"Selected Start: {int(start_ts // 60)}m {int(start_ts % 60)}s")
+            # 🟢 CHANGED: Replaced Slider with Minute/Second Inputs
+            c_min, c_sec = st.columns(2)
+            with c_min:
+                in_min = st.number_input("Start Minute", min_value=0, value=0, step=1)
+            with c_sec:
+                in_sec = st.number_input("Start Second", min_value=0, max_value=59, value=0, step=1)
+            
+            # Calculate total seconds automatically
+            start_ts = (in_min * 60) + in_sec
+            st.caption(f"🎯 Exact Start Point: {in_min}:{in_sec:02d} (Total: {start_ts}s)")
+            # -------------------------------------------------------
             
             c_dur, c_eff = st.columns(2)
             with c_dur:
                 man_dur = st.slider("Clip Duration (Seconds)", 5, 60, 15)
             with c_eff:
-                # Included the effects list here so it doesn't crash
                 EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
                 man_effect = st.selectbox("Effect", EFFECTS_LIST, key="man_fx")
 
             if st.button("🎬 RENDER PRECISION CLIP", type="primary"):
                 temp_name = "temp_precision_reel.mp4"
-                with st.spinner(f"Slicing at {start_ts}s..."):
-                    if process_reel(db_url, start_ts, man_dur, man_effect, temp_name):
+                with st.spinner(f"Slicing at {in_min}:{in_sec:02d}..."):
+                    if process_reel(db_url, start_ts, man_dur, man_effect, temp_name): 
                         st.session_state.preview_reel_path = temp_name; st.rerun()
 
         # --- UPDATED APPROVAL LOGIC (NOW USES DROPBOX) ---
@@ -693,12 +701,8 @@ with tab_dropbox:
             with c_act:
                 if st.button("✅ APPROVE & VAULT", key="man_save", type="primary"):
                     fn = f"reel_prec_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                    
-                    # 1. SEND TO DROPBOX (Not Supabase Storage)
                     url = upload_to_social_system(st.session_state.preview_reel_path, fn)
-                    
                     if url:
-                        # 2. SAVE LINK TO DATABASE
                         supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
                         st.success("Vaulted to Dropbox!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
                 
@@ -1038,6 +1042,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
