@@ -774,18 +774,19 @@ with tab_diary:
     # 2. Convert to Calendar Events
     events = []
     for p in scheduled:
+        # Create a short title for the view
         title_snippet = p['caption'][:30] + "..." if len(p['caption']) > 30 else p['caption']
         
         events.append({
             "title": f"👻 {title_snippet}",
             "start": p['scheduled_time'], 
-            "backgroundColor": "#00ff41", # Green Bar
+            "backgroundColor": "#00ff41", # Ghost Dimension Green Bar
             "borderColor": "#004400",
-            "textColor": "#000000",       # Black text
+            "textColor": "#000000",       # Black text on the green bar
             "extendedProps": p 
         })
 
-    # 3. Calendar Config
+    # 3. Calendar Configuration
     calendar_options = {
         "editable": "true",
         "navLinks": "true",
@@ -800,28 +801,46 @@ with tab_diary:
     
     # 4. CUSTOM CSS (Paper Mode: White BG, Black Text)
     custom_css = """
-        .fc-theme-standard .fc-scrollgrid, .fc-theme-standard td, .fc-theme-standard th {
+        /* Force Text to be Black inside the calendar */
+        .fc-theme-standard .fc-scrollgrid, 
+        .fc-theme-standard td, 
+        .fc-theme-standard th {
             color: #000000 !important; 
             border-color: #ddd !important;
         }
-        .fc-col-header-cell-cushion, .fc-daygrid-day-number {     
+
+        /* Day Names and Dates */
+        .fc-col-header-cell-cushion, 
+        .fc-daygrid-day-number {     
             color: #000000 !important; 
             text-decoration: none !important;
             font-weight: bold;
         }
-        .fc-day-today { background-color: #e0ffe4 !important; }
-        .fc-button-primary { 
-            background-color: #00ff41 !important; color: #000 !important; border: none !important; font-weight: bold !important; 
+
+        /* Highlight 'Today' with Light Green */
+        .fc-day-today { 
+            background-color: #e0ffe4 !important;
         }
+
+        /* Buttons */
+        .fc-button-primary { 
+            background-color: #00ff41 !important; 
+            color: #000 !important; 
+            border: none !important; 
+            font-weight: bold !important; 
+        }
+
+        /* Title */
         .fc-toolbar-title { 
-            color: #00ff41 !important; text-shadow: 1px 1px 2px black;
+            color: #00ff41 !important; 
+            text-shadow: 1px 1px 2px black;
         }
     """
 
-    # 5. Render
+    # 5. RENDER CALENDAR
     cal = calendar(events=events, options=calendar_options, custom_css=custom_css, key="social_cal")
 
-    # 6. Click to Edit
+    # 6. HANDLE CLICKS (Editor)
     if cal.get("eventClick"):
         event_data = cal["eventClick"]["event"]
         post_data = event_data["extendedProps"]
@@ -831,6 +850,7 @@ with tab_diary:
         
         with st.container(border=True):
             c_media, c_edit = st.columns([1, 2])
+            
             with c_media:
                 media = post_data['image_url']
                 thumb = post_data.get('thumbnail_url')
@@ -844,22 +864,30 @@ with tab_diary:
                 uid = post_data['id']
                 new_cap = st.text_area("Caption", value=post_data['caption'], height=120, key=f"cal_cap_{uid}")
                 
-                try: current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
-                except: current_dt = datetime.now()
+                try:
+                    current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
+                except:
+                    current_dt = datetime.now()
 
                 col_d, col_t = st.columns(2)
                 with col_d: new_d = st.date_input("Date", value=current_dt.date(), key=f"cal_d_{uid}")
                 with col_t: new_t = st.time_input("Time", value=current_dt.time(), key=f"cal_t_{uid}")
                 
                 c_save, c_del = st.columns(2)
+                
                 if c_save.button("💾 SAVE CHANGES", key=f"save_{uid}", type="primary"):
                     new_iso = datetime.combine(new_d, new_t).isoformat()
-                    supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": new_iso}).eq("id", uid).execute()
-                    st.success("Updated!"); st.rerun()
+                    supabase.table("social_posts").update({
+                        "caption": new_cap,
+                        "scheduled_time": new_iso
+                    }).eq("id", uid).execute()
+                    st.success("Updated! Refreshing...")
+                    st.rerun()
                 
                 if c_del.button("🗑️ UNSCHEDULE", key=f"del_{uid}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", uid).execute()
-                    st.success("Moved back to Drafts."); st.rerun()
+                    st.success("Moved back to Drafts.")
+                    st.rerun()
 
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
@@ -1172,6 +1200,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
