@@ -889,6 +889,7 @@ with d1:
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         target_dt = datetime.combine(din, tin)
+                        yt_id = None
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
@@ -905,7 +906,6 @@ with d1:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
                                 # 3. Upload to YouTube (Private Scheduled)
-                                # USES: AI Title for Headline, Original Caption for Description
                                 yt_link = upload_to_youtube_direct(local_path, yt_title, cap, target_dt)
                                 os.remove(local_path)
 
@@ -916,10 +916,15 @@ with d1:
                                     # 4. Update DB for MAKE (Keep Original Caption for FB/Insta!)
                                     supabase.table("social_posts").update({
                                         "status": "scheduled",
-                                        "caption": cap,             # <--- Keeps original caption for Insta
+                                        "caption": cap,
                                         "platform_post_id": yt_id,
                                         "scheduled_time": str(target_dt)
                                     }).eq("id", p['id']).execute()
+                                    
+                                    # 🟢 UPDATE TRAFFIC LIGHT (Video)
+                                    supabase.table("uploaded_images").update({
+                                        "last_used_at": datetime.utcnow().isoformat()
+                                    }).eq("file_url", p['image_url']).execute()
                                     
                                     st.toast("🤖 Waking up Make for FB/Insta...")
                                     
@@ -938,6 +943,12 @@ with d1:
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
                             }).eq("id", p['id']).execute()
+
+                            # 🟢 UPDATE TRAFFIC LIGHT (Image)
+                            supabase.table("uploaded_images").update({
+                                "last_used_at": datetime.utcnow().isoformat()
+                            }).eq("file_url", p['image_url']).execute()
+
                             st.toast("✅ Image Scheduled! Make will pick this up.")
                             st.rerun()
 
@@ -945,6 +956,7 @@ with d1:
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
                         now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                        yt_id = None
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
@@ -975,6 +987,11 @@ with d1:
                                         "scheduled_time": now_utc
                                     }).eq("id", p['id']).execute()
                                     
+                                    # 🟢 UPDATE TRAFFIC LIGHT (Video)
+                                    supabase.table("uploaded_images").update({
+                                        "last_used_at": datetime.utcnow().isoformat()
+                                    }).eq("file_url", p['image_url']).execute()
+                                    
                                     # Wake Make
                                     try:
                                         scenario_id = st.secrets["MAKE_SCENARIO_ID"]
@@ -991,6 +1008,11 @@ with d1:
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
                             }).eq("id", p['id']).execute()
+                            
+                            # 🟢 UPDATE TRAFFIC LIGHT (Image)
+                            supabase.table("uploaded_images").update({
+                                "last_used_at": datetime.utcnow().isoformat()
+                            }).eq("file_url", p['image_url']).execute()
                             
                             try:
                                 scenario_id = st.secrets["MAKE_SCENARIO_ID"]
@@ -1052,6 +1074,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
