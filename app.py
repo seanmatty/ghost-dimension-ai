@@ -774,19 +774,18 @@ with tab_diary:
     # 2. Convert to Calendar Events
     events = []
     for p in scheduled:
-        # Create a short title for the view
         title_snippet = p['caption'][:30] + "..." if len(p['caption']) > 30 else p['caption']
         
         events.append({
             "title": f"👻 {title_snippet}",
             "start": p['scheduled_time'], 
-            "backgroundColor": "#00ff41", # Ghost Dimension Green Bar
+            "backgroundColor": "#00ff41", # Green Bar
             "borderColor": "#004400",
-            "textColor": "#000000",       # Black text on the green bar
+            "textColor": "#000000",       # Black text
             "extendedProps": p 
         })
 
-    # 3. Calendar Configuration
+    # 3. Calendar Config
     calendar_options = {
         "editable": "true",
         "navLinks": "true",
@@ -801,46 +800,28 @@ with tab_diary:
     
     # 4. CUSTOM CSS (Paper Mode: White BG, Black Text)
     custom_css = """
-        /* Force Text to be Black inside the calendar */
-        .fc-theme-standard .fc-scrollgrid, 
-        .fc-theme-standard td, 
-        .fc-theme-standard th {
+        .fc-theme-standard .fc-scrollgrid, .fc-theme-standard td, .fc-theme-standard th {
             color: #000000 !important; 
             border-color: #ddd !important;
         }
-
-        /* Day Names and Dates */
-        .fc-col-header-cell-cushion, 
-        .fc-daygrid-day-number {     
+        .fc-col-header-cell-cushion, .fc-daygrid-day-number {     
             color: #000000 !important; 
             text-decoration: none !important;
             font-weight: bold;
         }
-
-        /* Highlight 'Today' with Light Green */
-        .fc-day-today { 
-            background-color: #e0ffe4 !important;
-        }
-
-        /* Buttons */
+        .fc-day-today { background-color: #e0ffe4 !important; }
         .fc-button-primary { 
-            background-color: #00ff41 !important; 
-            color: #000 !important; 
-            border: none !important; 
-            font-weight: bold !important; 
+            background-color: #00ff41 !important; color: #000 !important; border: none !important; font-weight: bold !important; 
         }
-
-        /* Title */
         .fc-toolbar-title { 
-            color: #00ff41 !important; 
-            text-shadow: 1px 1px 2px black;
+            color: #00ff41 !important; text-shadow: 1px 1px 2px black;
         }
     """
 
-    # 5. RENDER CALENDAR
+    # 5. Render
     cal = calendar(events=events, options=calendar_options, custom_css=custom_css, key="social_cal")
 
-    # 6. HANDLE CLICKS (Editor)
+    # 6. Click to Edit
     if cal.get("eventClick"):
         event_data = cal["eventClick"]["event"]
         post_data = event_data["extendedProps"]
@@ -850,7 +831,6 @@ with tab_diary:
         
         with st.container(border=True):
             c_media, c_edit = st.columns([1, 2])
-            
             with c_media:
                 media = post_data['image_url']
                 thumb = post_data.get('thumbnail_url')
@@ -864,30 +844,22 @@ with tab_diary:
                 uid = post_data['id']
                 new_cap = st.text_area("Caption", value=post_data['caption'], height=120, key=f"cal_cap_{uid}")
                 
-                try:
-                    current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
-                except:
-                    current_dt = datetime.now()
+                try: current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
+                except: current_dt = datetime.now()
 
                 col_d, col_t = st.columns(2)
                 with col_d: new_d = st.date_input("Date", value=current_dt.date(), key=f"cal_d_{uid}")
                 with col_t: new_t = st.time_input("Time", value=current_dt.time(), key=f"cal_t_{uid}")
                 
                 c_save, c_del = st.columns(2)
-                
                 if c_save.button("💾 SAVE CHANGES", key=f"save_{uid}", type="primary"):
                     new_iso = datetime.combine(new_d, new_t).isoformat()
-                    supabase.table("social_posts").update({
-                        "caption": new_cap,
-                        "scheduled_time": new_iso
-                    }).eq("id", uid).execute()
-                    st.success("Updated! Refreshing...")
-                    st.rerun()
+                    supabase.table("social_posts").update({"caption": new_cap, "scheduled_time": new_iso}).eq("id", uid).execute()
+                    st.success("Updated!"); st.rerun()
                 
                 if c_del.button("🗑️ UNSCHEDULE", key=f"del_{uid}"):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", uid).execute()
-                    st.success("Moved back to Drafts.")
-                    st.rerun()
+                    st.success("Moved back to Drafts."); st.rerun()
 
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
@@ -1015,6 +987,7 @@ with d1:
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         target_dt = datetime.combine(din, tin)
+                        yt_id = None
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
@@ -1031,7 +1004,6 @@ with d1:
                                     tmp_vid.write(r.content); local_path = tmp_vid.name
 
                                 # 3. Upload to YouTube (Private Scheduled)
-                                # USES: AI Title for Headline, Original Caption for Description
                                 yt_link = upload_to_youtube_direct(local_path, yt_title, cap, target_dt)
                                 os.remove(local_path)
 
@@ -1047,9 +1019,14 @@ with d1:
                                         "scheduled_time": str(target_dt)
                                     }).eq("id", p['id']).execute()
                                     
+                                    # 🟢 5. UPDATE TRAFFIC LIGHT (Mark as Used)
+                                    supabase.table("uploaded_images").update({
+                                        "last_used_at": datetime.utcnow().isoformat()
+                                    }).eq("file_url", p['image_url']).execute()
+                                    
                                     st.toast("🤖 Waking up Make for FB/Insta...")
                                     
-                                    # 5. Trigger Make
+                                    # 6. Trigger Make
                                     try:
                                         scenario_id = st.secrets["MAKE_SCENARIO_ID"]
                                         api_token = st.secrets["MAKE_API_TOKEN"]
@@ -1064,6 +1041,12 @@ with d1:
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
                             }).eq("id", p['id']).execute()
+
+                            # 🟢 UPDATE TRAFFIC LIGHT (Mark as Used)
+                            supabase.table("uploaded_images").update({
+                                "last_used_at": datetime.utcnow().isoformat()
+                            }).eq("file_url", p['image_url']).execute()
+
                             st.toast("✅ Image Scheduled! Make will pick this up.")
                             st.rerun()
 
@@ -1071,6 +1054,7 @@ with d1:
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
                         now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                        yt_id = None
                         
                         # --- PATH A: VIDEO (HYBRID HANDOFF) ---
                         if is_video:
@@ -1100,6 +1084,11 @@ with d1:
                                         "platform_post_id": yt_id,
                                         "scheduled_time": now_utc
                                     }).eq("id", p['id']).execute()
+
+                                    # 🟢 UPDATE TRAFFIC LIGHT (Mark as Used)
+                                    supabase.table("uploaded_images").update({
+                                        "last_used_at": datetime.utcnow().isoformat()
+                                    }).eq("file_url", p['image_url']).execute()
                                     
                                     # Wake Make
                                     try:
@@ -1117,6 +1106,11 @@ with d1:
                             supabase.table("social_posts").update({
                                 "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
                             }).eq("id", p['id']).execute()
+                            
+                            # 🟢 UPDATE TRAFFIC LIGHT (Mark as Used)
+                            supabase.table("uploaded_images").update({
+                                "last_used_at": datetime.utcnow().isoformat()
+                            }).eq("file_url", p['image_url']).execute()
                             
                             try:
                                 scenario_id = st.secrets["MAKE_SCENARIO_ID"]
@@ -1178,6 +1172,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
