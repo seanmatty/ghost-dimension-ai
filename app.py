@@ -666,32 +666,42 @@ with tab_dropbox:
             st.video(st.session_state.display_url)
             
             st.divider()
-            st.write("✂️ **Cut Settings**")
+            st.subheader("✂️ Cut Settings")
             
-            # 🟢 CHANGED: Replaced Slider with Minute/Second Inputs
-            c_min, c_sec = st.columns(2)
-            with c_min:
-                in_min = st.number_input("Start Minute", min_value=0, value=0, step=1)
-            with c_sec:
-                in_sec = st.number_input("Start Second", min_value=0, max_value=59, value=0, step=1)
+            # --- ROW 1: START TIME ---
+            st.caption("🟢 Start Point")
+            c_s1, c_s2 = st.columns(2)
+            with c_s1: s_min = st.number_input("Start Minute", min_value=0, value=0, step=1, key="s_min")
+            with c_s2: s_sec = st.number_input("Start Second", min_value=0, max_value=59, value=0, step=1, key="s_sec")
             
-            # Calculate total seconds automatically
-            start_ts = (in_min * 60) + in_sec
-            st.caption(f"🎯 Exact Start Point: {in_min}:{in_sec:02d} (Total: {start_ts}s)")
-            # -------------------------------------------------------
-            
-            c_dur, c_eff = st.columns(2)
-            with c_dur:
-                man_dur = st.slider("Clip Duration (Seconds)", 5, 60, 15)
-            with c_eff:
-                EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
-                man_effect = st.selectbox("Effect", EFFECTS_LIST, key="man_fx")
+            # --- ROW 2: END TIME ---
+            st.caption("🔴 End Point")
+            c_e1, c_e2 = st.columns(2)
+            with c_e1: e_min = st.number_input("End Minute", min_value=0, value=0, step=1, key="e_min")
+            with c_e2: e_sec = st.number_input("End Second", min_value=0, max_value=59, value=0, step=1, key="e_sec")
 
-            if st.button("🎬 RENDER PRECISION CLIP", type="primary"):
-                temp_name = "temp_precision_reel.mp4"
-                with st.spinner(f"Slicing at {in_min}:{in_sec:02d}..."):
-                    if process_reel(db_url, start_ts, man_dur, man_effect, temp_name): 
-                        st.session_state.preview_reel_path = temp_name; st.rerun()
+            # --- CALCULATE DURATION AUTOMATICALLY ---
+            start_ts = (s_min * 60) + s_sec
+            end_ts = (e_min * 60) + e_sec
+            duration = end_ts - start_ts
+
+            # Validate
+            if duration <= 0:
+                st.error("⚠️ End time must be AFTER Start time.")
+            else:
+                st.info(f"⏱️ Clip Length: **{duration} seconds**")
+
+                # --- ROW 3: EFFECT ---
+                st.caption("✨ Filter")
+                EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
+                man_effect = st.selectbox("Select Visual Effect", EFFECTS_LIST, key="man_fx")
+
+                if st.button("🎬 RENDER PRECISION CLIP", type="primary"):
+                    temp_name = "temp_precision_reel.mp4"
+                    with st.spinner(f"Cutting from {s_min}:{s_sec:02d} to {e_min}:{e_sec:02d}..."):
+                        # We pass the calculated 'duration' to the processor
+                        if process_reel(db_url, start_ts, duration, man_effect, temp_name): 
+                            st.session_state.preview_reel_path = temp_name; st.rerun()
 
         # --- UPDATED APPROVAL LOGIC (NOW USES DROPBOX) ---
         if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
@@ -1042,6 +1052,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
