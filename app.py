@@ -800,13 +800,42 @@ with tab_diary:
         "themeSystem": "standard",
     }
     
-    # Custom CSS to force Dark Mode on the Calendar
+    # Custom CSS for "Paper Mode" (White Background, Black Text)
     custom_css = """
-        .fc-theme-standard td, .fc-theme-standard th { border-color: #333 !important; }
-        .fc-col-header-cell-cushion, .fc-daygrid-day-number { color: #e0e0e0 !important; text-decoration: none !important; }
-        .fc-day-today { background-color: #1a1a1a !important; }
-        .fc-button-primary { background-color: #00ff41 !important; color: #000 !important; border: none !important; font-weight: bold !important; }
-        .fc-toolbar-title { color: #00ff41 !important; }
+        /* 1. Force Text to be Black inside the calendar */
+        .fc-theme-standard .fc-scrollgrid, 
+        .fc-theme-standard td, 
+        .fc-theme-standard th {
+            color: #000000 !important; 
+            border-color: #ddd !important; /* Subtle grey grid lines */
+        }
+
+        /* 2. Specific coloring for Day Names and Dates */
+        .fc-col-header-cell-cushion, /* Day Names (Sun, Mon) */
+        .fc-daygrid-day-number {     /* Dates (1, 2, 3) */
+            color: #000000 !important; 
+            text-decoration: none !important;
+            font-weight: bold;
+        }
+
+        /* 3. Highlight 'Today' with Light Green */
+        .fc-day-today { 
+            background-color: #e0ffe4 !important; /* Pale Ghost Green */
+        }
+
+        /* 4. Style the Buttons (Month/Week/Day) */
+        .fc-button-primary { 
+            background-color: #00ff41 !important; 
+            color: #000 !important; 
+            border: none !important; 
+            font-weight: bold !important; 
+        }
+
+        /* 5. Title Color (Month Name) */
+        .fc-toolbar-title { 
+            color: #00ff41 !important; 
+            text-shadow: 1px 1px 2px black; /* Small shadow to pop against dark app bg */
+        }
     """
 
     # 4. RENDER CALENDAR
@@ -1156,6 +1185,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
