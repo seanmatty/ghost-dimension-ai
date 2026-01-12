@@ -22,6 +22,7 @@ import dropbox #
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from streamlit_calendar import calendar
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -763,93 +764,108 @@ with tab_video_vault:
                             supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
-# --- TAB 5: CONTENT DIARY (SCHEDULE MANAGER) ---
+# --- TAB 5: VISUAL CONTENT CALENDAR ---
 with tab_diary:
-    st.subheader("📅 Content Schedule")
+    st.subheader("📅 Content Calendar")
+
+    # 1. Fetch Scheduled Data
+    scheduled = supabase.table("social_posts").select("*").eq("status", "scheduled").execute().data
     
-    # 1. Fetch all scheduled items
-    scheduled_posts = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
-    
-    if not scheduled_posts:
-        st.info("📭 The diary is empty. Schedule some drafts in the Command Center!")
-    else:
-        # Group by Date Headers
-        current_date_header = None
+    # 2. Convert to Calendar Events
+    events = []
+    for p in scheduled:
+        # Create a short title for the view
+        title_snippet = p['caption'][:30] + "..." if len(p['caption']) > 30 else p['caption']
         
-        for p in scheduled_posts:
-            # Parse Time
-            try:
-                # Handle ISO format from Supabase
-                dt_obj = datetime.fromisoformat(p['scheduled_time'].replace('Z', '+00:00'))
-            except:
-                # Fallback if time is messy
-                dt_obj = datetime.now()
+        events.append({
+            "title": f"👻 {title_snippet}",
+            "start": p['scheduled_time'], # ISO format works perfectly here
+            "backgroundColor": "#00ff41", # Ghost Dimension Green
+            "borderColor": "#004400",
+            "textColor": "#000000",
+            # We hide the full data inside 'extendedProps' to use later when clicked
+            "extendedProps": p 
+        })
 
-            # --- DATE HEADER (Only show once per day) ---
-            date_str = dt_obj.strftime("%A, %d %B %Y")
-            if date_str != current_date_header:
-                st.markdown(f"### 🗓️ {date_str}")
-                st.markdown("---")
-                current_date_header = date_str
+    # 3. Calendar Configuration (Dark Mode Styling)
+    calendar_options = {
+        "editable": "true",
+        "navLinks": "true",
+        "headerToolbar": {
+            "left": "today prev,next",
+            "center": "title",
+            "right": "dayGridMonth,timeGridWeek,timeGridDay"
+        },
+        "initialView": "dayGridMonth",
+        "themeSystem": "standard",
+    }
+    
+    # Custom CSS to force Dark Mode on the Calendar
+    custom_css = """
+        .fc-theme-standard td, .fc-theme-standard th { border-color: #333 !important; }
+        .fc-col-header-cell-cushion, .fc-daygrid-day-number { color: #e0e0e0 !important; text-decoration: none !important; }
+        .fc-day-today { background-color: #1a1a1a !important; }
+        .fc-button-primary { background-color: #00ff41 !important; color: #000 !important; border: none !important; font-weight: bold !important; }
+        .fc-toolbar-title { color: #00ff41 !important; }
+    """
 
-            # --- THE ENTRY CARD ---
-            with st.container(border=True):
-                c_media, c_edit, c_act = st.columns([1, 2, 1])
+    # 4. RENDER CALENDAR
+    cal = calendar(events=events, options=calendar_options, custom_css=custom_css, key="social_cal")
+
+    # 5. HANDLE CLICKS (The Editor)
+    # If a user clicks an event, 'cal' returns the event data
+    if cal.get("eventClick"):
+        event_data = cal["eventClick"]["event"]
+        post_data = event_data["extendedProps"]
+        
+        st.divider()
+        st.markdown(f"### ✏️ Editing: {event_data['title']}")
+        
+        with st.container(border=True):
+            c_media, c_edit = st.columns([1, 2])
+            
+            # Show Media
+            with c_media:
+                media = post_data['image_url']
+                thumb = post_data.get('thumbnail_url')
+                if ".mp4" in media or "youtu" in media:
+                    if thumb: st.image(thumb, caption="Cover Image")
+                    else: st.video(media)
+                else:
+                    st.image(media)
+
+            # Edit Form
+            with c_edit:
+                # We use keys based on ID so state doesn't get mixed up
+                uid = post_data['id']
                 
-                # Col 1: Media Preview
-                with c_media:
-                    # Show thumbnail if video, else show image
-                    thumb = p.get('thumbnail_url')
-                    media = p['image_url']
-                    
-                    if ".mp4" in media or "youtu" in media:
-                        if thumb: st.image(thumb, use_container_width=True)
-                        else: st.video(media)
-                        st.caption("🎥 Reel")
-                    else:
-                        st.image(media, use_container_width=True)
-                        st.caption("📸 Photo")
+                new_cap = st.text_area("Caption", value=post_data['caption'], height=120, key=f"cal_cap_{uid}")
+                
+                # Date parsing logic
+                try:
+                    current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
+                except:
+                    current_dt = datetime.now()
 
-                # Col 2: Edit Controls
-                with c_edit:
-                    new_caption = st.text_area("Caption", value=p['caption'], height=100, key=f"d_cap_{p['id']}")
-                    
-                    c_d, c_t = st.columns(2)
-                    with c_d:
-                        new_date = st.date_input("Date", value=dt_obj.date(), key=f"d_date_{p['id']}")
-                    with c_t:
-                        new_time = st.time_input("Time", value=dt_obj.time(), key=f"d_time_{p['id']}")
-
-                # Col 3: Actions
-                with c_act:
-                    st.write("") # Spacer
-                    st.write("") # Spacer
-                    
-                    # UPDATE BUTTON
-                    if st.button("💾 UPDATE", key=f"d_upd_{p['id']}", type="primary"):
-                        new_dt = datetime.combine(new_date, new_time)
-                        
-                        # If time changed, we update scheduled_time
-                        payload = {
-                            "caption": new_caption,
-                            "scheduled_time": str(new_dt)
-                        }
-                        
-                        # Update DB
-                        supabase.table("social_posts").update(payload).eq("id", p['id']).execute()
-                        
-                        # OPTIONAL: If you want to notify Make/Zapier of the change, you'd do it here.
-                        # For now, we assume Make reads the DB when the time comes.
-                        
-                        st.success("Updated!")
-                        st.rerun()
-
-                    # DELETE BUTTON
-                    if st.button("🗑️ UNSCHEDULE", key=f"d_del_{p['id']}"):
-                        # Move back to draft instead of deleting completely? 
-                        # Or delete? Let's move to draft to be safe.
-                        supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute()
-                        st.rerun()
+                col_d, col_t = st.columns(2)
+                with col_d: new_d = st.date_input("Date", value=current_dt.date(), key=f"cal_d_{uid}")
+                with col_t: new_t = st.time_input("Time", value=current_dt.time(), key=f"cal_t_{uid}")
+                
+                c_save, c_del = st.columns(2)
+                
+                if c_save.button("💾 SAVE CHANGES", key=f"save_{uid}", type="primary"):
+                    new_iso = datetime.combine(new_d, new_t).isoformat()
+                    supabase.table("social_posts").update({
+                        "caption": new_cap,
+                        "scheduled_time": new_iso
+                    }).eq("id", uid).execute()
+                    st.success("Updated! Refreshing...")
+                    st.rerun()
+                
+                if c_del.button("🗑️ UNSCHEDULE", key=f"del_{uid}"):
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", uid).execute()
+                    st.success("Moved back to Drafts.")
+                    st.rerun()
 
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
@@ -1140,6 +1156,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
