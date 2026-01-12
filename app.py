@@ -498,10 +498,12 @@ with tab_upload:
 with c_lib:
         st.subheader("2. Image Library (Photos Only)")
         
-        # 🟢 ADDED THIS MISSING LINE:
+        # Strategy & Context Controls
         u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
+        # 🟢 NEW: Context Input
+        u_context = st.text_input("Optional: What is this?", placeholder="e.g. Liverpool Castle ruins...", key="lib_ctx")
 
-        # FIX: Added .eq("media_type", "image") so videos don't show up here
+        # Fetch Images
         lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
         
         if lib:
@@ -509,46 +511,38 @@ with c_lib:
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
-                        # --- 🚦 TRAFFIC LIGHT LOGIC ---
+                        # --- TRAFFIC LIGHT LOGIC ---
                         last_used_str = img.get('last_used_at')
-                        status_icon = "🟢" # Default: Safe/Green
+                        status_icon = "🟢" 
                         status_msg = "Fresh"
-                        
                         if last_used_str:
                             try:
-                                # Calculate days since last use
                                 last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
                                 days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
-                                
-                                # If used in last 30 days -> RED
-                                if days_ago < 30: 
-                                    status_icon = "🔴"
-                                    status_msg = f"{days_ago}d ago"
-                                else:
-                                    status_icon = "🟢"
-                                    status_msg = f"{days_ago}d ago"
-                            except:
-                                status_msg = "Unknown"
+                                if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d ago"
+                                else: status_icon, status_msg = "🟢", f"{days_ago}d ago"
+                            except: status_msg = "Unknown"
 
-                        # Show Image & Light
                         st.image(img['file_url'], use_container_width=True)
                         st.markdown(f"**{status_icon} {status_msg}**")
-                        # -----------------------------
 
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                vision_prompt = f"""You are the Marketing Lead for the show 'Ghost Dimension'.
+                                # 🟢 NEW: Inject User Context into Prompt
+                                user_hint = f"USER CONTEXT: {u_context}" if u_context else ""
+                                
+                                vision_prompt = f"""You are the Marketing Lead for 'Ghost Dimension'.
                                 BRAND FACTS: {get_brand_knowledge()}
-                                TASK: Write a scary, promotional social media caption for this photo. 
-                                Mention specific episodes or history. Strategy: {u_strategy}.
-                                IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:', 'Here is the caption:', or any headers."""
+                                {user_hint}
+                                TASK: Write a scary, promotional caption. Strategy: {u_strategy}.
+                                IMPORTANT: Output ONLY the final caption text."""
                                 
                                 resp = openai_client.chat.completions.create(
                                     model="gpt-4o", 
                                     messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
                                     max_tokens=400
                                 )
-                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": "Promotional Upload", "status": "draft"}).execute()
+                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": u_context if u_context else "Promotional Upload", "status": "draft"}).execute()
                                 st.success("Draft Created!"); st.rerun()
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
@@ -714,7 +708,6 @@ with tab_dropbox:
 # --- TAB 4: VIDEO VAULT ---
 with tab_video_vault:
     st.subheader("📼 Video Reel Library")
-    # Fetch videos (including the new last_used_at column)
     videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).execute().data
     
     if videos:
@@ -722,37 +715,34 @@ with tab_video_vault:
         for idx, vid in enumerate(videos):
             with cols[idx % 3]: 
                 with st.container(border=True):
-                    # --- 🚦 TRAFFIC LIGHT LOGIC ---
+                    # --- TRAFFIC LIGHT LOGIC ---
                     last_used_str = vid.get('last_used_at')
-                    status_icon = "🟢" # Default
-                    status_msg = "Fresh"
-                    
+                    status_icon, status_msg = "🟢", "Fresh"
                     if last_used_str:
                         try:
-                            # Calculate days since last use
                             last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
                             days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
-                            
-                            if days_ago < 30: 
-                                status_icon = "🔴"
-                                status_msg = f"{days_ago}d ago"
-                            else:
-                                status_icon = "🟢"
-                                status_msg = f"{days_ago}d ago"
-                        except:
-                            status_msg = "Unknown"
+                            if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d ago"
+                            else: status_icon, status_msg = "🟢", f"{days_ago}d ago"
+                        except: status_msg = "Unknown"
                     
                     st.video(vid['file_url'])
                     st.markdown(f"**{status_icon} {status_msg}**")
                     st.caption(f"📄 {vid['filename']}")
-                    # -----------------------------
+
+                    # 🟢 NEW: Individual Context Box for Video
+                    v_context = st.text_input("Context (Optional)", placeholder="e.g. EVP captured...", key=f"vctx_{vid['id']}")
 
                     c_draft, c_del = st.columns(2)
                     with c_draft:
                         if st.button("✨ CAPTION", key=f"vcap_{vid['id']}"):
-                            prompt = "Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
+                            # 🟢 NEW: Inject User Context
+                            user_hint = f"USER CONTEXT: {v_context}" if v_context else "Context: A scary paranormal investigation clip."
+                            
+                            prompt = f"{user_hint} Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
+                            
                             cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
-                            supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": "Reel", "status": "draft"}).execute()
+                            supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": v_context if v_context else "Reel", "status": "draft"}).execute()
                             st.success("Draft Created! Check 'Command Center'.")
                     with c_del:
                         if st.button("🗑️", key=f"vdel_{vid['id']}"): 
@@ -1048,6 +1038,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
