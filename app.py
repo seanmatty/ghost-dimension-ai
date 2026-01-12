@@ -779,15 +779,14 @@ with tab_diary:
         
         events.append({
             "title": f"👻 {title_snippet}",
-            "start": p['scheduled_time'], # ISO format works perfectly here
-            "backgroundColor": "#00ff41", # Ghost Dimension Green
+            "start": p['scheduled_time'], 
+            "backgroundColor": "#00ff41", # Ghost Dimension Green Bar
             "borderColor": "#004400",
-            "textColor": "#000000",
-            # We hide the full data inside 'extendedProps' to use later when clicked
+            "textColor": "#000000",       # Black text on the green bar
             "extendedProps": p 
         })
 
-    # 3. Calendar Configuration (Dark Mode Styling)
+    # 3. Calendar Configuration
     calendar_options = {
         "editable": "true",
         "navLinks": "true",
@@ -800,30 +799,30 @@ with tab_diary:
         "themeSystem": "standard",
     }
     
-    # Custom CSS for "Paper Mode" (White Background, Black Text)
+    # 4. CUSTOM CSS (Paper Mode: White BG, Black Text)
     custom_css = """
-        /* 1. Force Text to be Black inside the calendar */
+        /* Force Text to be Black inside the calendar */
         .fc-theme-standard .fc-scrollgrid, 
         .fc-theme-standard td, 
         .fc-theme-standard th {
             color: #000000 !important; 
-            border-color: #ddd !important; /* Subtle grey grid lines */
+            border-color: #ddd !important;
         }
 
-        /* 2. Specific coloring for Day Names and Dates */
-        .fc-col-header-cell-cushion, /* Day Names (Sun, Mon) */
-        .fc-daygrid-day-number {     /* Dates (1, 2, 3) */
+        /* Day Names and Dates */
+        .fc-col-header-cell-cushion, 
+        .fc-daygrid-day-number {     
             color: #000000 !important; 
             text-decoration: none !important;
             font-weight: bold;
         }
 
-        /* 3. Highlight 'Today' with Light Green */
+        /* Highlight 'Today' with Light Green */
         .fc-day-today { 
-            background-color: #e0ffe4 !important; /* Pale Ghost Green */
+            background-color: #e0ffe4 !important;
         }
 
-        /* 4. Style the Buttons (Month/Week/Day) */
+        /* Buttons */
         .fc-button-primary { 
             background-color: #00ff41 !important; 
             color: #000 !important; 
@@ -831,18 +830,17 @@ with tab_diary:
             font-weight: bold !important; 
         }
 
-        /* 5. Title Color (Month Name) */
+        /* Title */
         .fc-toolbar-title { 
             color: #00ff41 !important; 
-            text-shadow: 1px 1px 2px black; /* Small shadow to pop against dark app bg */
+            text-shadow: 1px 1px 2px black;
         }
     """
 
-    # 4. RENDER CALENDAR
+    # 5. RENDER CALENDAR
     cal = calendar(events=events, options=calendar_options, custom_css=custom_css, key="social_cal")
 
-    # 5. HANDLE CLICKS (The Editor)
-    # If a user clicks an event, 'cal' returns the event data
+    # 6. HANDLE CLICKS (Editor)
     if cal.get("eventClick"):
         event_data = cal["eventClick"]["event"]
         post_data = event_data["extendedProps"]
@@ -853,7 +851,6 @@ with tab_diary:
         with st.container(border=True):
             c_media, c_edit = st.columns([1, 2])
             
-            # Show Media
             with c_media:
                 media = post_data['image_url']
                 thumb = post_data.get('thumbnail_url')
@@ -863,14 +860,10 @@ with tab_diary:
                 else:
                     st.image(media)
 
-            # Edit Form
             with c_edit:
-                # We use keys based on ID so state doesn't get mixed up
                 uid = post_data['id']
-                
                 new_cap = st.text_area("Caption", value=post_data['caption'], height=120, key=f"cal_cap_{uid}")
                 
-                # Date parsing logic
                 try:
                     current_dt = datetime.fromisoformat(post_data['scheduled_time'].replace('Z', '+00:00'))
                 except:
@@ -1185,6 +1178,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
