@@ -395,8 +395,8 @@ total_ev = supabase.table("social_posts").select("id", count="exact").eq("status
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
-# TABS:
-tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS"])
+# UPDATE THIS LINE:
+tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_diary, tab_analytics = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📅 DIARY", "📊 ANALYTICS"])
 
 # --- TAB 1: NANO GENERATOR ---
 with tab_gen:
@@ -763,6 +763,94 @@ with tab_video_vault:
                             supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
+# --- TAB 5: CONTENT DIARY (SCHEDULE MANAGER) ---
+with tab_diary:
+    st.subheader("📅 Content Schedule")
+    
+    # 1. Fetch all scheduled items
+    scheduled_posts = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
+    
+    if not scheduled_posts:
+        st.info("📭 The diary is empty. Schedule some drafts in the Command Center!")
+    else:
+        # Group by Date Headers
+        current_date_header = None
+        
+        for p in scheduled_posts:
+            # Parse Time
+            try:
+                # Handle ISO format from Supabase
+                dt_obj = datetime.fromisoformat(p['scheduled_time'].replace('Z', '+00:00'))
+            except:
+                # Fallback if time is messy
+                dt_obj = datetime.now()
+
+            # --- DATE HEADER (Only show once per day) ---
+            date_str = dt_obj.strftime("%A, %d %B %Y")
+            if date_str != current_date_header:
+                st.markdown(f"### 🗓️ {date_str}")
+                st.markdown("---")
+                current_date_header = date_str
+
+            # --- THE ENTRY CARD ---
+            with st.container(border=True):
+                c_media, c_edit, c_act = st.columns([1, 2, 1])
+                
+                # Col 1: Media Preview
+                with c_media:
+                    # Show thumbnail if video, else show image
+                    thumb = p.get('thumbnail_url')
+                    media = p['image_url']
+                    
+                    if ".mp4" in media or "youtu" in media:
+                        if thumb: st.image(thumb, use_container_width=True)
+                        else: st.video(media)
+                        st.caption("🎥 Reel")
+                    else:
+                        st.image(media, use_container_width=True)
+                        st.caption("📸 Photo")
+
+                # Col 2: Edit Controls
+                with c_edit:
+                    new_caption = st.text_area("Caption", value=p['caption'], height=100, key=f"d_cap_{p['id']}")
+                    
+                    c_d, c_t = st.columns(2)
+                    with c_d:
+                        new_date = st.date_input("Date", value=dt_obj.date(), key=f"d_date_{p['id']}")
+                    with c_t:
+                        new_time = st.time_input("Time", value=dt_obj.time(), key=f"d_time_{p['id']}")
+
+                # Col 3: Actions
+                with c_act:
+                    st.write("") # Spacer
+                    st.write("") # Spacer
+                    
+                    # UPDATE BUTTON
+                    if st.button("💾 UPDATE", key=f"d_upd_{p['id']}", type="primary"):
+                        new_dt = datetime.combine(new_date, new_time)
+                        
+                        # If time changed, we update scheduled_time
+                        payload = {
+                            "caption": new_caption,
+                            "scheduled_time": str(new_dt)
+                        }
+                        
+                        # Update DB
+                        supabase.table("social_posts").update(payload).eq("id", p['id']).execute()
+                        
+                        # OPTIONAL: If you want to notify Make/Zapier of the change, you'd do it here.
+                        # For now, we assume Make reads the DB when the time comes.
+                        
+                        st.success("Updated!")
+                        st.rerun()
+
+                    # DELETE BUTTON
+                    if st.button("🗑️ UNSCHEDULE", key=f"d_del_{p['id']}"):
+                        # Move back to draft instead of deleting completely? 
+                        # Or delete? Let's move to draft to be safe.
+                        supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute()
+                        st.rerun()
+
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
     c_head, c_btn = st.columns([3, 1])
@@ -1052,6 +1140,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
