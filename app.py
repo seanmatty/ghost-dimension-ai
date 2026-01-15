@@ -1034,20 +1034,17 @@ with d2:
     if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.now().year
     if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.now().month
 
-    # Custom CSS for tighter calendar cells
+    # CSS to tighten the layout and force button visibility
     st.markdown("""
     <style>
         div[data-testid="stColumn"] { padding: 0px !important; }
+        div[data-testid="stVerticalBlock"] { gap: 0rem; }
+        
         .day-box {
-            border: 1px solid #333;
-            border-radius: 5px;
-            padding: 10px;
-            min-height: 100px;
-            background-color: #0e0e0e;
-        }
-        .today-box {
-            border: 1px solid #00ff41;
-            box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+            min-height: 120px;
+            padding: 5px;
+            border-right: 1px solid #222;
+            border-bottom: 1px solid #222;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1091,7 +1088,7 @@ with d2:
     cols = st.columns(7)
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     for i, d in enumerate(days):
-        cols[i].markdown(f"<div style='text-align: center; color: #888; font-weight: bold;'>{d}</div>", unsafe_allow_html=True)
+        cols[i].markdown(f"<div style='text-align: center; color: #888; font-weight: bold; margin-bottom: 10px;'>{d}</div>", unsafe_allow_html=True)
 
     # Grid
     cal = calendar.Calendar()
@@ -1102,7 +1099,7 @@ with d2:
         for i, day_num in enumerate(week):
             with cols[i]:
                 if day_num == 0:
-                    st.write("") # Spacer
+                    st.markdown("<div style='height: 100px; border: 1px solid #111;'></div>", unsafe_allow_html=True) 
                 else:
                     # Logic
                     date_key = f"{st.session_state.cal_year}-{st.session_state.cal_month}-{day_num}"
@@ -1110,31 +1107,30 @@ with d2:
                     now = datetime.now()
                     is_today = (day_num == now.day and st.session_state.cal_month == now.month and st.session_state.cal_year == now.year)
                     
-                    # Container styling logic
-                    container_border = True 
+                    # Container styling
+                    border_style = True
                     
-                    with st.container(border=container_border):
+                    with st.container(border=border_style):
                         # Date Number
-                        num_color = "#00ff41" if is_today else "#e0e0e0"
-                        st.markdown(f"<div style='text-align: right; color: {num_color}; font-weight: bold;'>{day_num}</div>", unsafe_allow_html=True)
+                        num_color = "#00ff41" if is_today else "#666"
+                        st.markdown(f"<div style='text-align: right; color: {num_color}; font-weight: bold; margin-bottom: 5px;'>{day_num}</div>", unsafe_allow_html=True)
                         
-                        # Post Dots/Buttons
+                        # Post Buttons (GREEN PRIMARY)
                         if day_posts:
                             for post in day_posts:
-                                # A cleaner, smaller button
                                 label = "🎥 Reel" if (".mp4" in post['image_url']) else "📸 Post"
-                                if st.button(f"{label}", key=f"cal_{post['id']}", help=post['caption'], use_container_width=True):
+                                # type="primary" forces Green BG + Black Text (High Contrast)
+                                if st.button(f"{label}", key=f"cal_{post['id']}", help=post['caption'], use_container_width=True, type="primary"):
                                     st.session_state.selected_post = post
                                     st.rerun()
                         else:
-                            # Empty space to keep grid consistent height
-                            st.markdown("<div style='height: 25px;'></div>", unsafe_allow_html=True)
+                            st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
 
     # 5. EDITOR DRAWER
     if 'selected_post' in st.session_state:
         p = st.session_state.selected_post
         st.markdown("---")
-        st.info(f"📝 Editing: {p['scheduled_time']}")
+        st.info(f"📝 Editing Post for: {p['scheduled_time']}")
         
         with st.container(border=True):
             c1, c2, c3 = st.columns([1, 2, 1])
@@ -1189,6 +1185,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
