@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import os
 import subprocess
+import calendar
 import tempfile
 import dropbox #
 from google.oauth2.credentials import Credentials
@@ -1029,18 +1030,114 @@ with d1:
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
                         
 with d2:
-    sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
+    # 1. SETUP: Manage Calendar State (Current Month/Year)
+    if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.now().year
+    if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.now().month
+
+    # 2. NAVIGATION HEADER
+    c_prev, c_title, c_next = st.columns([1, 5, 1])
+    with c_prev:
+        if st.button("◀️", key="prev_m"):
+            st.session_state.cal_month -= 1
+            if st.session_state.cal_month == 0:
+                st.session_state.cal_month = 12
+                st.session_state.cal_year -= 1
+            st.rerun()
+    with c_next:
+        if st.button("▶️", key="next_m"):
+            st.session_state.cal_month += 1
+            if st.session_state.cal_month == 13:
+                st.session_state.cal_month = 1
+                st.session_state.cal_year += 1
+            st.rerun()
+    with c_title:
+        month_name = calendar.month_name[st.session_state.cal_month]
+        st.markdown(f"<h3 style='text-align: center; color: #00ff41;'>{month_name} {st.session_state.cal_year}</h3>", unsafe_allow_html=True)
+
+    # 3. GET DATA & ORGANIZE
+    sch = supabase.table("social_posts").select("*").eq("status", "scheduled").execute().data
+    posts_by_date = {}
     for p in sch:
+        # Fix the "T" issue safely
+        raw_ts = str(p['scheduled_time']).replace('T', ' ').split('+')[0]
+        try:
+            dt = datetime.strptime(raw_ts, "%Y-%m-%d %H:%M:%S")
+            # Key = "2026-1-15"
+            key = f"{dt.year}-{dt.month}-{dt.day}"
+            if key not in posts_by_date: posts_by_date[key] = []
+            posts_by_date[key].append(p)
+        except: pass
+
+    # 4. DRAW THE GRID
+    # Weekday Headers
+    cols = st.columns(7)
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    for i, d in enumerate(days):
+        cols[i].markdown(f"**{d}**")
+
+    # Calendar Rows
+    cal = calendar.Calendar()
+    # Returns matrix: [[0,0,1,2...], [3,4,5...]]
+    month_days = cal.monthdayscalendar(st.session_state.cal_year, st.session_state.cal_month)
+
+    for week in month_days:
+        cols = st.columns(7)
+        for i, day_num in enumerate(week):
+            with cols[i]:
+                if day_num == 0:
+                    st.write("") # Empty box for padding
+                else:
+                    # Check for posts on this day
+                    date_key = f"{st.session_state.cal_year}-{st.session_state.cal_month}-{day_num}"
+                    day_posts = posts_by_date.get(date_key, [])
+                    
+                    # Highlight Today
+                    now = datetime.now()
+                    is_today = (day_num == now.day and st.session_state.cal_month == now.month and st.session_state.cal_year == now.year)
+                    
+                    # Draw the Day Box
+                    with st.container(border=True):
+                        if is_today:
+                            st.markdown(f"**🟢 {day_num}**")
+                        else:
+                            st.markdown(f"**{day_num}**")
+                        
+                        # Show Posts in the box
+                        for post in day_posts:
+                            # Short caption for the button
+                            lbl = (post['caption'][:10] + "..") if len(post['caption']) > 10 else "Post"
+                            if st.button(f"👻 {lbl}", key=f"cal_btn_{post['id']}", help=post['caption']):
+                                st.session_state.selected_post = post
+                                st.rerun()
+
+    # 5. EDITOR PANEL (Appears below calendar when you click a post)
+    if 'selected_post' in st.session_state:
+        p = st.session_state.selected_post
+        st.divider()
+        st.markdown("### 📝 Edit Selected Post")
+        
         with st.container(border=True):
-            ci, ct = st.columns([1, 3])
-            with ci: 
-                if ".mp4" in p['image_url']: st.video(p['image_url'])
-                else: st.image(p['image_url'], use_column_width=True)
-            with ct:
-                st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
-                st.text_area("Scheduled Caption", p['caption'], height=100, disabled=True, key=f"view_{p['id']}")
-                if st.button("❌ ABORT", key=f"can_{p['id']}"):
-                    supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
+            c_img, c_det, c_act = st.columns([1, 2, 1])
+            with c_img:
+                if ".mp4" in p['image_url'] or "youtu" in p['image_url']:
+                    st.video(p['image_url'])
+                else:
+                    st.image(p['image_url'])
+            with c_det:
+                st.info(f"**Scheduled:** {p['scheduled_time']}")
+                st.caption(p['caption'])
+            with c_act:
+                if st.button("✏️ Move to Drafts", key="cal_edit"):
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute()
+                    del st.session_state.selected_post
+                    st.rerun()
+                if st.button("❌ Delete", key="cal_del"):
+                    supabase.table("social_posts").delete().eq("id", p['id']).execute()
+                    del st.session_state.selected_post
+                    st.rerun()
+                if st.button("Close", key="cal_cls"):
+                    del st.session_state.selected_post
+                    st.rerun()
 
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
@@ -1074,6 +1171,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
