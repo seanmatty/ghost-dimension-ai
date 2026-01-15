@@ -1030,21 +1030,39 @@ with d1:
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
                         
 with d2:
-    # 1. SETUP: Manage Calendar State (Current Month/Year)
+    # 1. SETUP & STYLE
     if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.now().year
     if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.now().month
 
+    # Custom CSS for tighter calendar cells
+    st.markdown("""
+    <style>
+        div[data-testid="stColumn"] { padding: 0px !important; }
+        .day-box {
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            min-height: 100px;
+            background-color: #0e0e0e;
+        }
+        .today-box {
+            border: 1px solid #00ff41;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     # 2. NAVIGATION HEADER
-    c_prev, c_title, c_next = st.columns([1, 5, 1])
+    c_prev, c_title, c_next = st.columns([1, 6, 1])
     with c_prev:
-        if st.button("◀️", key="prev_m"):
+        if st.button("◀", key="prev_m", use_container_width=True):
             st.session_state.cal_month -= 1
             if st.session_state.cal_month == 0:
                 st.session_state.cal_month = 12
                 st.session_state.cal_year -= 1
             st.rerun()
     with c_next:
-        if st.button("▶️", key="next_m"):
+        if st.button("▶", key="next_m", use_container_width=True):
             st.session_state.cal_month += 1
             if st.session_state.cal_month == 13:
                 st.session_state.cal_month = 1
@@ -1052,32 +1070,31 @@ with d2:
             st.rerun()
     with c_title:
         month_name = calendar.month_name[st.session_state.cal_month]
-        st.markdown(f"<h3 style='text-align: center; color: #00ff41;'>{month_name} {st.session_state.cal_year}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='text-align: center; margin: 0; color: #00ff41;'>{month_name} {st.session_state.cal_year}</h3>", unsafe_allow_html=True)
+    
+    st.divider()
 
-    # 3. GET DATA & ORGANIZE
+    # 3. GET DATA
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").execute().data
     posts_by_date = {}
     for p in sch:
-        # Fix the "T" issue safely
         raw_ts = str(p['scheduled_time']).replace('T', ' ').split('+')[0]
         try:
             dt = datetime.strptime(raw_ts, "%Y-%m-%d %H:%M:%S")
-            # Key = "2026-1-15"
             key = f"{dt.year}-{dt.month}-{dt.day}"
             if key not in posts_by_date: posts_by_date[key] = []
             posts_by_date[key].append(p)
         except: pass
 
-    # 4. DRAW THE GRID
-    # Weekday Headers
+    # 4. DRAW CALENDAR
+    # Header
     cols = st.columns(7)
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     for i, d in enumerate(days):
-        cols[i].markdown(f"**{d}**")
+        cols[i].markdown(f"<div style='text-align: center; color: #888; font-weight: bold;'>{d}</div>", unsafe_allow_html=True)
 
-    # Calendar Rows
+    # Grid
     cal = calendar.Calendar()
-    # Returns matrix: [[0,0,1,2...], [3,4,5...]]
     month_days = cal.monthdayscalendar(st.session_state.cal_year, st.session_state.cal_month)
 
     for week in month_days:
@@ -1085,60 +1102,61 @@ with d2:
         for i, day_num in enumerate(week):
             with cols[i]:
                 if day_num == 0:
-                    st.write("") # Empty box for padding
+                    st.write("") # Spacer
                 else:
-                    # Check for posts on this day
+                    # Logic
                     date_key = f"{st.session_state.cal_year}-{st.session_state.cal_month}-{day_num}"
                     day_posts = posts_by_date.get(date_key, [])
-                    
-                    # Highlight Today
                     now = datetime.now()
                     is_today = (day_num == now.day and st.session_state.cal_month == now.month and st.session_state.cal_year == now.year)
                     
-                    # Draw the Day Box
-                    with st.container(border=True):
-                        if is_today:
-                            st.markdown(f"**🟢 {day_num}**")
-                        else:
-                            st.markdown(f"**{day_num}**")
+                    # Container styling logic
+                    container_border = True 
+                    
+                    with st.container(border=container_border):
+                        # Date Number
+                        num_color = "#00ff41" if is_today else "#e0e0e0"
+                        st.markdown(f"<div style='text-align: right; color: {num_color}; font-weight: bold;'>{day_num}</div>", unsafe_allow_html=True)
                         
-                        # Show Posts in the box
-                        for post in day_posts:
-                            # Short caption for the button
-                            lbl = (post['caption'][:10] + "..") if len(post['caption']) > 10 else "Post"
-                            if st.button(f"👻 {lbl}", key=f"cal_btn_{post['id']}", help=post['caption']):
-                                st.session_state.selected_post = post
-                                st.rerun()
+                        # Post Dots/Buttons
+                        if day_posts:
+                            for post in day_posts:
+                                # A cleaner, smaller button
+                                label = "🎥 Reel" if (".mp4" in post['image_url']) else "📸 Post"
+                                if st.button(f"{label}", key=f"cal_{post['id']}", help=post['caption'], use_container_width=True):
+                                    st.session_state.selected_post = post
+                                    st.rerun()
+                        else:
+                            # Empty space to keep grid consistent height
+                            st.markdown("<div style='height: 25px;'></div>", unsafe_allow_html=True)
 
-    # 5. EDITOR PANEL (Appears below calendar when you click a post)
+    # 5. EDITOR DRAWER
     if 'selected_post' in st.session_state:
         p = st.session_state.selected_post
-        st.divider()
-        st.markdown("### 📝 Edit Selected Post")
+        st.markdown("---")
+        st.info(f"📝 Editing: {p['scheduled_time']}")
         
         with st.container(border=True):
-            c_img, c_det, c_act = st.columns([1, 2, 1])
-            with c_img:
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1:
                 if ".mp4" in p['image_url'] or "youtu" in p['image_url']:
                     st.video(p['image_url'])
                 else:
                     st.image(p['image_url'])
-            with c_det:
-                st.info(f"**Scheduled:** {p['scheduled_time']}")
-                st.caption(p['caption'])
-            with c_act:
-                if st.button("✏️ Move to Drafts", key="cal_edit"):
+            with c2:
+                st.text_area("Caption", p['caption'], height=150, disabled=True)
+            with c3:
+                if st.button("✏️ Edit in Drafts", use_container_width=True):
                     supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute()
                     del st.session_state.selected_post
                     st.rerun()
-                if st.button("❌ Delete", key="cal_del"):
+                if st.button("❌ Delete Post", use_container_width=True):
                     supabase.table("social_posts").delete().eq("id", p['id']).execute()
                     del st.session_state.selected_post
                     st.rerun()
-                if st.button("Close", key="cal_cls"):
+                if st.button("Close", key="cls_btn", use_container_width=True):
                     del st.session_state.selected_post
                     st.rerun()
-
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
     for p in hist:
@@ -1171,6 +1189,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
