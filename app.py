@@ -1029,70 +1029,18 @@ with d1:
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
                         
 with d2:
-    c_head, c_refresh = st.columns([3, 1])
-    with c_head: 
-        st.subheader("📅 The Forward Planner")
-    with c_refresh: 
-        if st.button("🔄 Refresh Agenda", key="ref_agenda"): st.rerun()
-
-    # 1. Fetch Scheduled Posts
     sch = supabase.table("social_posts").select("*").eq("status", "scheduled").order("scheduled_time").execute().data
-    
-    if not sch:
-        st.info("📭 No upcoming posts. Go to the Command Center to schedule some!")
-    else:
-        # 2. Group by Date
-        grouped_posts = {}
-        for p in sch:
-            # Clean date string (Handle 'T' issue safely)
-            raw_ts = str(p['scheduled_time']).replace('T', ' ').split('+')[0]
-            try:
-                dt_obj = datetime.strptime(raw_ts, "%Y-%m-%d %H:%M:%S")
-                # Group Header: "Tuesday, 14 January 2026"
-                date_key = dt_obj.strftime("%A, %d %B %Y") 
-                # Display Time: "14:30"
-                p['display_time'] = dt_obj.strftime("%H:%M")
-                
-                if date_key not in grouped_posts: grouped_posts[date_key] = []
-                grouped_posts[date_key].append(p)
-            except: pass
-
-        # 3. Render the Feed
-        for date_header, posts_that_day in grouped_posts.items():
-            st.markdown(f"### {date_header}") # The Day Header
-            
-            for post in posts_that_day:
-                # Create a card for each post
-                with st.container(border=True):
-                    c_img, c_info, c_act = st.columns([1, 3, 1])
-                    
-                    # A. Thumbnail
-                    with c_img:
-                        if ".mp4" in post['image_url'] or "youtu" in post['image_url']:
-                            st.video(post['image_url'])
-                        else:
-                            st.image(post['image_url'], use_container_width=True)
-                            
-                    # B. Info
-                    with c_info:
-                        st.markdown(f"**⏰ {post.get('display_time', 'Unknown')} UTC**")
-                        # Disabled text area lets you read the whole caption easily
-                        st.text_area("Caption", post['caption'], height=80, key=f"ad_{post['id']}", disabled=True)
-                    
-                    # C. Actions
-                    with c_act:
-                        st.write("") # Spacer
-                        if st.button("✏️ EDIT", key=f"edit_{post['id']}"):
-                            # Send back to drafts to edit
-                            supabase.table("social_posts").update({"status": "draft"}).eq("id", post['id']).execute()
-                            st.toast("Moved back to Drafts for editing!")
-                            st.rerun()
-                            
-                        if st.button("❌ ABORT", key=f"kill_{post['id']}"):
-                            supabase.table("social_posts").delete().eq("id", post['id']).execute()
-                            st.rerun()
-            
-            st.divider() # Line between days
+    for p in sch:
+        with st.container(border=True):
+            ci, ct = st.columns([1, 3])
+            with ci: 
+                if ".mp4" in p['image_url']: st.video(p['image_url'])
+                else: st.image(p['image_url'], use_column_width=True)
+            with ct:
+                st.write(f"⏰ **Due:** {p['scheduled_time']} UTC")
+                st.text_area("Scheduled Caption", p['caption'], height=100, disabled=True, key=f"view_{p['id']}")
+                if st.button("❌ ABORT", key=f"can_{p['id']}"):
+                    supabase.table("social_posts").update({"status": "draft"}).eq("id", p['id']).execute(); st.rerun()
 
 with d3:
     hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
