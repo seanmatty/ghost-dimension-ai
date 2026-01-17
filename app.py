@@ -958,48 +958,88 @@ with tab_dropbox:
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
 
-# --- TAB 4: VIDEO VAULT ---
+# --- TAB 4: VIDEO VAULT (PAGINATED & COMPACT) ---
 with tab_video_vault:
     st.subheader("📼 Video Reel Library")
-    videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).execute().data
+
+    # 1. Pagination State
+    if 'vid_page' not in st.session_state: st.session_state.vid_page = 0
+    VID_PAGE_SIZE = 9
+
+    # 2. Get Total Count
+    try:
+        count_res = supabase.table("uploaded_images").select("id", count="exact").eq("media_type", "video").execute()
+        total_vids = count_res.count if count_res.count else 0
+    except: total_vids = 0
+
+    # 3. Calculate Range
+    start_idx = st.session_state.vid_page * VID_PAGE_SIZE
+    end_idx = start_idx + VID_PAGE_SIZE - 1
+
+    # 4. Fetch Data (Slice)
+    videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).range(start_idx, end_idx).execute().data
     
+    # 5. Pagination Controls
+    c_prev, c_info, c_next = st.columns([1, 2, 1])
+    with c_prev:
+        if st.session_state.vid_page > 0:
+            if st.button("◀ Prev", key="vid_prev", use_container_width=True):
+                st.session_state.vid_page -= 1
+                st.rerun()
+    with c_info:
+        st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em; padding-top: 5px;'>{start_idx+1}-{min(end_idx+1, total_vids)} of {total_vids} reels</div>", unsafe_allow_html=True)
+    with c_next:
+        if total_vids > (end_idx + 1):
+            if st.button("Next ▶", key="vid_next", use_container_width=True):
+                st.session_state.vid_page += 1
+                st.rerun()
+
+    st.divider()
+
+    # 6. Render Grid (Compact)
     if videos:
-        cols = st.columns(3)
+        # Use more columns to make videos smaller (4 columns instead of 3)
+        cols = st.columns(4)
         for idx, vid in enumerate(videos):
-            with cols[idx % 3]: 
+            with cols[idx % 4]: 
                 with st.container(border=True):
-                    # --- TRAFFIC LIGHT LOGIC ---
+                    # --- TRAFFIC LIGHT ---
                     last_used_str = vid.get('last_used_at')
                     status_icon, status_msg = "🟢", "Fresh"
                     if last_used_str:
                         try:
                             last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
                             days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
-                            if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d ago"
-                            else: status_icon, status_msg = "🟢", f"{days_ago}d ago"
-                        except: status_msg = "Unknown"
+                            if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d"
+                            else: status_icon, status_msg = "🟢", f"{days_ago}d"
+                        except: status_msg = "?"
                     
+                    # Video Player
                     st.video(vid['file_url'])
-                    st.markdown(f"**{status_icon} {status_msg}**")
-                    st.caption(f"📄 {vid['filename']}")
+                    
+                    # Compact Header
+                    st.markdown(f"<div style='font-size: 0.8em;'><b>{status_icon} {status_msg}</b></div>", unsafe_allow_html=True)
+                    st.caption(vid['filename'][:20] + "...")
 
-                    # 🟢 NEW: Individual Context Box for Video
-                    v_context = st.text_input("Context (Optional)", placeholder="e.g. EVP captured...", key=f"vctx_{vid['id']}")
+                    # Context Input
+                    v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
 
-                    c_draft, c_del = st.columns(2)
-                    with c_draft:
-                        if st.button("✨ CAPTION", key=f"vcap_{vid['id']}"):
-                            # 🟢 NEW: Inject User Context
-                            user_hint = f"USER CONTEXT: {v_context}" if v_context else "Context: A scary paranormal investigation clip."
-                            
-                            prompt = f"{user_hint} Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
-                            
-                            cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
-                            supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": v_context if v_context else "Reel", "status": "draft"}).execute()
-                            st.success("Draft Created! Check 'Command Center'.")
-                    with c_del:
-                        if st.button("🗑️", key=f"vdel_{vid['id']}"): 
-                            supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
+                    # Actions (Stacked to save width)
+                    if st.button("✨ CAPTION", key=f"vcap_{vid['id']}", use_container_width=True):
+                        # Instruction Logic
+                        if v_context:
+                            context_instruction = f"MANDATORY INSTRUCTION: The subject is '{v_context}'. You MUST write the caption about '{v_context}'."
+                        else:
+                            context_instruction = "Context: A scary paranormal investigation clip."
+                        
+                        prompt = f"{context_instruction} Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
+                        
+                        cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                        supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": v_context if v_context else "Reel", "status": "draft"}).execute()
+                        st.success("Draft Created!")
+                        
+                    if st.button("🗑️", key=f"vdel_{vid['id']}", use_container_width=True): 
+                        supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
         st.info("Vault empty. Render some Reels in the Dropbox Lab!")
 # --- TAB 5: ANALYTICS & STRATEGY ---
@@ -1486,6 +1526,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
