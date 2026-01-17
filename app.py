@@ -1066,55 +1066,60 @@ with tab_analytics:
                 st.success(res)
                 st.rerun()
     
-    # 1. FETCH DATA
-    history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(100).execute().data
+    # 1. FETCH DATA... (keep the rest of your existing code here)
+    history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(50).execute().data
     
     if len(history) > 0:
         df = pd.DataFrame(history)
         
-        # Convert timestamps
+        # Convert timestamps to readable days/hours
         df['created_at'] = pd.to_datetime(df['created_at'])
         df['day_name'] = df['created_at'].dt.day_name()
         df['hour'] = df['created_at'].dt.hour
         
-        # Safety Fill
+        # --- 🛡️ SAFETY PATCH: Handle Missing Columns ---
+        # 1. Fill missing columns with 0 to prevent crash
         if 'likes' not in df.columns: df['likes'] = 0
         if 'comments' not in df.columns: df['comments'] = 0
         if 'views' not in df.columns: df['views'] = 0
+
+        # 2. Ensure numbers are numbers (not None/NaN)
         df['likes'] = df['likes'].fillna(0)
         df['comments'] = df['comments'].fillna(0)
 
-        # Calculate Score
+        # 3. Calculate Score
         df['score'] = df['likes'] + (df['comments'] * 5)
+        # -----------------------------------------------
         
-        # 2. COLUMNS
+        # 2. SHOW THE WINNERS
+        # Define the columns (This was missing in your code!)
         c_win, c_chart = st.columns([1, 2])
 
         with c_win:
             st.write("🏆 **Top Videos**")
+            # Show top 5 videos by score
             st.dataframe(df[['caption', 'score', 'views']].sort_values('score', ascending=False).head(5), hide_index=True)
             
         with c_chart:
             st.write("📊 **Heatmap: Best Times by Day**")
             
-            # --- ROBUST HEATMAP LOGIC ---
+            # Pivot the data: Days as rows, Hours as columns, Score as values
+            # This shows you the "Hot Spots" for each specific day
             try:
-                # Pivot with fill_value=0 so missing data = 0 instead of Error
-                heatmap = df.pivot_table(index='day_name', columns='hour', values='score', aggfunc='mean', fill_value=0)
-                
-                # Reindex ensures ALL days appear, even if you never posted on them
+                heatmap = df.pivot_table(index='day_name', columns='hour', values='score', aggfunc='mean')
+                # Sort rows by day of week order
                 days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-                heatmap = heatmap.reindex(days_order, fill_value=0)
+                heatmap = heatmap.reindex(days_order)
                 
-                # Display the grid
-                st.dataframe(heatmap.style.background_gradient(cmap="Blues", axis=None).format("{:.0f}"), use_container_width=True)
+                # Display as a color-coded table (High score = Darker Blue)
+                st.dataframe(heatmap.style.background_gradient(cmap="Blues", axis=None).format("{:.1f}"), use_container_width=True)
             except Exception as e:
-                # This fallback should rarely happen now
-                st.error(f"Error building heatmap: {e}")
+                st.info("Not enough data to build a heatmap yet. Keep posting!")
+                # Fallback to simple chart if pivot fails
                 chart_data = df.groupby('hour')['score'].mean()
                 st.bar_chart(chart_data)
 
-        # 3. UPDATE STRATEGY BUTTON
+        # 3. THE BRAIN UPDATE BUTTON
         st.divider()
         st.info("Click below to teach the Scheduler your new best times.")
         
@@ -1124,15 +1129,22 @@ with tab_analytics:
             progress_text = "Analyzing data..."
             my_bar = st.progress(0, text=progress_text)
             
+            # Find best hour for each day
             for i, day in enumerate(days_order):
                 day_data = df[df['day_name'] == day]
                 
                 if not day_data.empty:
+                    # Find hour with max average score
                     best_h = int(day_data.groupby('hour')['score'].mean().idxmax())
                 else:
-                    best_h = 20 # Default to 8 PM if no data
+                    # Default to 20:00 (8 PM) if no data for that day yet
+                    best_h = 20
                 
+                # Save to Supabase 'strategy' table
+                # This overwrites the old rule for that day
                 supabase.table("strategy").upsert({"day": day, "best_hour": best_h}, on_conflict="day").execute()
+                
+                # Update progress bar
                 my_bar.progress((i + 1) / 7, text=f"Updated {day}...")
             
             my_bar.empty()
@@ -1539,7 +1551,6 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
-
 
 
 
