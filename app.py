@@ -957,15 +957,13 @@ with tab_dropbox:
                 
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-
-# --- TAB 4: VIDEO VAULT (STRATEGY ENABLED) ---
+# --- TAB 4: VIDEO VAULT (SPACED & SAFE) ---
 with tab_video_vault:
     # 1. Header & Global Strategy
     c_title, c_strat = st.columns([2, 1])
     with c_title:
         st.subheader("📼 Video Reel Library")
     with c_strat:
-        # This dropdown controls the tone for ALL video drafts generated on this screen
         v_strategy = st.selectbox("Global Strategy", STRATEGY_OPTIONS, label_visibility="collapsed")
 
     # 2. Pagination State
@@ -1008,7 +1006,13 @@ with tab_video_vault:
         for idx, vid in enumerate(videos):
             with cols[idx % 4]: 
                 with st.container(border=True):
-                    # --- STATUS HEADER ---
+                    # 1. Video Player
+                    st.video(vid['file_url'])
+                    
+                    # 2. Safety Spacer (Forces gap so video doesn't cover text)
+                    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+                    # 3. Traffic Light Logic
                     last_used_str = vid.get('last_used_at')
                     status_icon, status_msg = "🟢", "Fresh"
                     if last_used_str:
@@ -1019,15 +1023,13 @@ with tab_video_vault:
                             else: status_icon, status_msg = "🟢", f"{days_ago}d"
                         except: status_msg = "?"
                     
-                    st.markdown(f"<div style='font-size: 0.85em; margin-bottom: 8px;'><b>{status_icon} {status_msg}</b></div>", unsafe_allow_html=True)
+                    # Display Status
+                    st.markdown(f"**{status_icon} {status_msg}**")
 
-                    # --- VIDEO PLAYER ---
-                    st.video(vid['file_url'])
-                    st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True) # Spacer
-
-                    # --- CONTROLS ---
+                    # 4. Context Input
                     v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
 
+                    # 5. Actions
                     if st.button("✨ CAPTION", key=f"vcap_{vid['id']}", use_container_width=True):
                         # Instruction Logic
                         if v_context:
@@ -1035,7 +1037,6 @@ with tab_video_vault:
                         else:
                             context_instruction = "Analyze the visual evidence yourself."
                         
-                        # The "Big Brain" Prompt
                         prompt = f"""
                         You are the Social Media Lead for 'Ghost Dimension'.
                         BRAND FACTS: {get_brand_knowledge()}
@@ -1537,6 +1538,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
