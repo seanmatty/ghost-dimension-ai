@@ -48,15 +48,36 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- SECURITY GATE ---
+# --- SECURITY GATE (Crash-Proof Version) ---
 def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    # 1. Check if we are already logged in (Skip everything if yes)
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 2. Define the callback (Runs ONLY when you hit Enter on the password box)
     def password_entered():
-        if hmac.compare_digest(st.session_state["password"], st.secrets["ADMIN_PASSWORD"]):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-        else: st.session_state["password_correct"] = False
-    if st.session_state.get("password_correct", False): return True
-    st.text_input("Enter Clearance Code", type="password", on_change=password_entered, key="password")
+        # Check if the "password" key exists to prevent KeyErrors
+        if "password" in st.session_state:
+            if hmac.compare_digest(st.session_state["password"], st.secrets["ADMIN_PASSWORD"]):
+                st.session_state["password_correct"] = True
+                del st.session_state["password"]  # Clean up
+            else:
+                st.session_state["password_correct"] = False
+    
+    # 3. Show the login box
+    st.text_input(
+        "Enter Clearance Code", 
+        type="password", 
+        on_change=password_entered, 
+        key="password"
+    )
+    
+    # 4. Show error if they got it wrong
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("🚫 Access Denied")
+        
     return False
 
 if not check_password(): st.stop()
@@ -1320,6 +1341,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
