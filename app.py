@@ -958,13 +958,13 @@ with tab_dropbox:
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
 
-# --- TAB 4: VIDEO VAULT (FIXED LAYOUT) ---
+# --- TAB 4: VIDEO VAULT (FIXED SPACING) ---
 with tab_video_vault:
     st.subheader("📼 Video Reel Library")
 
     # 1. Pagination State
     if 'vid_page' not in st.session_state: st.session_state.vid_page = 0
-    VID_PAGE_SIZE = 8 # 8 items fits nicely (4x2 grid)
+    VID_PAGE_SIZE = 8 
 
     # 2. Get Total Count
     try:
@@ -976,7 +976,7 @@ with tab_video_vault:
     start_idx = st.session_state.vid_page * VID_PAGE_SIZE
     end_idx = start_idx + VID_PAGE_SIZE - 1
 
-    # 4. Fetch Data (Slice)
+    # 4. Fetch Data
     videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).range(start_idx, end_idx).execute().data
     
     # 5. Pagination Controls
@@ -998,11 +998,12 @@ with tab_video_vault:
 
     # 6. Render Grid
     if videos:
+        # Use 4 columns for compact size
         cols = st.columns(4)
         for idx, vid in enumerate(videos):
             with cols[idx % 4]: 
                 with st.container(border=True):
-                    # --- TRAFFIC LIGHT LOGIC ---
+                    # --- STATUS HEADER ---
                     last_used_str = vid.get('last_used_at')
                     status_icon, status_msg = "🟢", "Fresh"
                     if last_used_str:
@@ -1013,16 +1014,18 @@ with tab_video_vault:
                             else: status_icon, status_msg = "🟢", f"{days_ago}d"
                         except: status_msg = "?"
                     
-                    # 1. Status Header (Now at the top!)
-                    st.markdown(f"<div style='font-size: 0.85em; margin-bottom: 8px;'><b>{status_icon} {status_msg}</b></div>", unsafe_allow_html=True)
+                    # Header with spacing
+                    st.markdown(f"**{status_icon} {status_msg}**")
+                    st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Spacer
 
-                    # 2. Video Player
+                    # --- VIDEO PLAYER ---
                     st.video(vid['file_url'])
                     
-                    # 3. Context Input (Safe at the bottom)
+                    st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True) # Spacer
+
+                    # --- CONTROLS ---
                     v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
 
-                    # 4. Actions
                     if st.button("✨ CAPTION", key=f"vcap_{vid['id']}", use_container_width=True):
                         if v_context:
                             context_instruction = f"MANDATORY INSTRUCTION: The subject is '{v_context}'. You MUST write the caption about '{v_context}'."
@@ -1523,6 +1526,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
