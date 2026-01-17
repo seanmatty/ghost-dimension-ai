@@ -724,9 +724,29 @@ with tab_upload:
 
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                user_hint = f"USER CONTEXT: {u_context}" if u_context else ""
-                                vision_prompt = f"""You are the Marketing Lead for 'Ghost Dimension'. BRAND FACTS: {get_brand_knowledge()} {user_hint} TASK: Write a scary, promotional caption. Strategy: {u_strategy}. IMPORTANT: Output ONLY the final caption text."""
-                                resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=400)
+                                # 1. Define the Instruction Strength
+                                if u_context:
+                                    # If you typed something, make it MANDATORY
+                                    context_instruction = f"MANDATORY INSTRUCTION: The subject of this image is '{u_context}'. You MUST write the caption about '{u_context}' specifically. Do not write a generic brand post."
+                                else:
+                                    # If empty, let the AI be creative
+                                    context_instruction = "Analyze the image details yourself."
+
+                                # 2. The Strengthened Prompt
+                                vision_prompt = f"""
+                                You are the Marketing Lead for 'Ghost Dimension'. 
+                                BRAND FACTS: {get_brand_knowledge()} 
+                                {context_instruction}
+                                TASK: Write a scary, engaging social media caption. 
+                                STRATEGY: {u_strategy}. 
+                                IMPORTANT: Output ONLY the final caption text.
+                                """
+                                
+                                resp = openai_client.chat.completions.create(
+                                    model="gpt-4o", 
+                                    messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
+                                    max_tokens=400
+                                )
                                 supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": u_context if u_context else "Promotional Upload", "status": "draft"}).execute()
                                 st.success("Draft Created!"); st.rerun()
                         
@@ -1369,6 +1389,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
