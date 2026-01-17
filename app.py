@@ -1358,14 +1358,77 @@ with d2:
                     del st.session_state.selected_post
                     st.rerun()
 with d3:
-    hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).limit(10).execute().data
-    for p in hist:
-        with st.container(border=True):
-            ci, ct = st.columns([1, 3])
-            with ci: 
-                 if ".mp4" in p['image_url']: st.video(p['image_url'])
-                 else: st.image(p['image_url'], use_column_width=True)
-            with ct: st.write(f"✅ Sent: {p['scheduled_time']}"); st.markdown(f"> {p['caption']}")
+    # 1. State Management for Pagination
+    if 'hist_page' not in st.session_state: st.session_state.hist_page = 0
+    PAGE_SIZE = 10
+
+    # 2. Get Total Count (Fast Query)
+    # We need to know the total to decide if "Next" button should be visible
+    try:
+        count_res = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute()
+        total_items = count_res.count if count_res.count else 0
+    except: 
+        total_items = 0
+
+    # 3. Calculate Range for Supabase
+    start_idx = st.session_state.hist_page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE - 1
+
+    # 4. Navigation Controls
+    c_prev, c_info, c_next = st.columns([1, 4, 1])
+    
+    with c_prev:
+        # Only show Prev if we aren't on page 0
+        if st.session_state.hist_page > 0:
+            if st.button("◀ Prev", key="h_prev", use_container_width=True):
+                st.session_state.hist_page -= 1
+                st.rerun()
+
+    with c_next:
+        # Only show Next if there are more items ahead
+        if total_items > (end_idx + 1):
+            if st.button("Next ▶", key="h_next", use_container_width=True):
+                st.session_state.hist_page += 1
+                st.rerun()
+
+    with c_info:
+        st.markdown(f"<div style='text-align: center; color: #666; padding-top: 5px;'>Page {st.session_state.hist_page + 1} • Showing {start_idx + 1}-{min(end_idx + 1, total_items)} of {total_items} posts</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # 5. Fetch Data (Only the slice we need)
+    # .range() is efficient because it only downloads 10 rows
+    hist = supabase.table("social_posts").select("*").eq("status", "posted").order("scheduled_time", desc=True).range(start_idx, end_idx).execute().data
+
+    if hist:
+        for p in hist:
+            with st.container(border=True):
+                ci, ct = st.columns([1, 3])
+                
+                # Thumbnail
+                with ci: 
+                     if ".mp4" in p['image_url'] or "youtu" in p['image_url']: 
+                         st.video(p['image_url'])
+                     else: 
+                         st.image(p['image_url'], use_container_width=True)
+                
+                # Details
+                with ct: 
+                    st.write(f"✅ **Sent:** {p.get('scheduled_time', 'Unknown')}")
+                    
+                    # Show stats if available
+                    stats = []
+                    if p.get('views'): stats.append(f"👁️ {p['views']}")
+                    if p.get('likes'): stats.append(f"❤️ {p['likes']}")
+                    if stats: st.caption(" | ".join(stats))
+                    
+                    st.markdown(f"> {p['caption']}")
+                    
+                    # Debug Info (Hidden in expander)
+                    with st.expander("Technical Data"):
+                        st.code(f"ID: {p['id']}\nPlatform ID: {p.get('platform_post_id')}")
+    else:
+        st.info("📭 No history found on this page.")
 
 # --- MAINTENANCE & TOKEN GEN ---
 st.markdown("---")
@@ -1389,6 +1452,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
