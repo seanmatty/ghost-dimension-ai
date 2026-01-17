@@ -696,19 +696,55 @@ with tab_upload:
                         else: st.error("Upload failed.")
                 except Exception as e: st.error(f"Error: {e}")
 
-    # --- COLUMN 2: LIBRARY (Unchanged) ---
+    # --- COLUMN 2: LIBRARY (PAGINATED) ---
     with c_lib:
         st.subheader("2. Image Library (Photos Only)")
+        
+        # 1. Inputs
         u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
         u_context = st.text_input("Optional: What is this?", placeholder="e.g. Liverpool Castle ruins...", key="lib_ctx")
 
-        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).limit(12).execute().data
+        # 2. Pagination State
+        if 'lib_page' not in st.session_state: st.session_state.lib_page = 0
+        LIB_PAGE_SIZE = 9
+
+        # 3. Get Total Count (for Next button logic)
+        try:
+            count_res = supabase.table("uploaded_images").select("id", count="exact").eq("media_type", "image").execute()
+            total_lib_imgs = count_res.count if count_res.count else 0
+        except: total_lib_imgs = 0
+
+        # 4. Calculate Range
+        start_idx = st.session_state.lib_page * LIB_PAGE_SIZE
+        end_idx = start_idx + LIB_PAGE_SIZE - 1
+
+        # 5. Fetch Data (Slice)
+        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).range(start_idx, end_idx).execute().data
         
+        # 6. Pagination Controls
+        c_prev, c_info, c_next = st.columns([1, 2, 1])
+        with c_prev:
+            if st.session_state.lib_page > 0:
+                if st.button("◀ Prev", key="lib_prev", use_container_width=True):
+                    st.session_state.lib_page -= 1
+                    st.rerun()
+        with c_info:
+            st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em; padding-top: 5px;'>{start_idx+1}-{min(end_idx+1, total_lib_imgs)} of {total_lib_imgs}</div>", unsafe_allow_html=True)
+        with c_next:
+            if total_lib_imgs > (end_idx + 1):
+                if st.button("Next ▶", key="lib_next", use_container_width=True):
+                    st.session_state.lib_page += 1
+                    st.rerun()
+
+        st.divider()
+
+        # 7. Render Grid
         if lib:
             cols = st.columns(3)
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
+                        # Traffic Light Logic
                         last_used_str = img.get('last_used_at')
                         status_icon, status_msg = "🟢", "Fresh"
                         if last_used_str:
@@ -722,17 +758,15 @@ with tab_upload:
                         st.image(img['file_url'], use_container_width=True)
                         st.markdown(f"**{status_icon} {status_msg}**")
 
+                        # Draft Button (With your 'Mandatory' Fix)
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                # 1. Define the Instruction Strength
+                                # Instruction Strength Logic
                                 if u_context:
-                                    # If you typed something, make it MANDATORY
                                     context_instruction = f"MANDATORY INSTRUCTION: The subject of this image is '{u_context}'. You MUST write the caption about '{u_context}' specifically. Do not write a generic brand post."
                                 else:
-                                    # If empty, let the AI be creative
                                     context_instruction = "Analyze the image details yourself."
 
-                                # 2. The Strengthened Prompt
                                 vision_prompt = f"""
                                 You are the Marketing Lead for 'Ghost Dimension'. 
                                 BRAND FACTS: {get_brand_knowledge()} 
@@ -1452,6 +1486,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
