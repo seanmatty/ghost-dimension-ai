@@ -958,28 +958,34 @@ with tab_dropbox:
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
 
-# --- TAB 4: VIDEO VAULT (FIXED SPACING) ---
+# --- TAB 4: VIDEO VAULT (STRATEGY ENABLED) ---
 with tab_video_vault:
-    st.subheader("📼 Video Reel Library")
+    # 1. Header & Global Strategy
+    c_title, c_strat = st.columns([2, 1])
+    with c_title:
+        st.subheader("📼 Video Reel Library")
+    with c_strat:
+        # This dropdown controls the tone for ALL video drafts generated on this screen
+        v_strategy = st.selectbox("Global Strategy", STRATEGY_OPTIONS, label_visibility="collapsed")
 
-    # 1. Pagination State
+    # 2. Pagination State
     if 'vid_page' not in st.session_state: st.session_state.vid_page = 0
     VID_PAGE_SIZE = 8 
 
-    # 2. Get Total Count
+    # 3. Get Total Count
     try:
         count_res = supabase.table("uploaded_images").select("id", count="exact").eq("media_type", "video").execute()
         total_vids = count_res.count if count_res.count else 0
     except: total_vids = 0
 
-    # 3. Calculate Range
+    # 4. Calculate Range
     start_idx = st.session_state.vid_page * VID_PAGE_SIZE
     end_idx = start_idx + VID_PAGE_SIZE - 1
 
-    # 4. Fetch Data
+    # 5. Fetch Data
     videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).range(start_idx, end_idx).execute().data
     
-    # 5. Pagination Controls
+    # 6. Pagination Controls
     c_prev, c_info, c_next = st.columns([1, 2, 1])
     with c_prev:
         if st.session_state.vid_page > 0:
@@ -996,9 +1002,8 @@ with tab_video_vault:
 
     st.divider()
 
-    # 6. Render Grid
+    # 7. Render Grid
     if videos:
-        # Use 4 columns for compact size
         cols = st.columns(4)
         for idx, vid in enumerate(videos):
             with cols[idx % 4]: 
@@ -1014,25 +1019,31 @@ with tab_video_vault:
                             else: status_icon, status_msg = "🟢", f"{days_ago}d"
                         except: status_msg = "?"
                     
-                    # Header with spacing
-                    st.markdown(f"**{status_icon} {status_msg}**")
-                    st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Spacer
+                    st.markdown(f"<div style='font-size: 0.85em; margin-bottom: 8px;'><b>{status_icon} {status_msg}</b></div>", unsafe_allow_html=True)
 
                     # --- VIDEO PLAYER ---
                     st.video(vid['file_url'])
-                    
                     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True) # Spacer
 
                     # --- CONTROLS ---
                     v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
 
                     if st.button("✨ CAPTION", key=f"vcap_{vid['id']}", use_container_width=True):
+                        # Instruction Logic
                         if v_context:
                             context_instruction = f"MANDATORY INSTRUCTION: The subject is '{v_context}'. You MUST write the caption about '{v_context}'."
                         else:
-                            context_instruction = "Context: A scary paranormal investigation clip."
+                            context_instruction = "Analyze the visual evidence yourself."
                         
-                        prompt = f"{context_instruction} Write a viral, scary Instagram Reel caption for this Ghost Dimension clip. Use trending hashtags."
+                        # The "Big Brain" Prompt
+                        prompt = f"""
+                        You are the Social Media Lead for 'Ghost Dimension'.
+                        BRAND FACTS: {get_brand_knowledge()}
+                        {context_instruction}
+                        TASK: Write a caption for this video.
+                        STRATEGY: {v_strategy}
+                        IMPORTANT: Output ONLY the final caption text.
+                        """
                         
                         cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
                         supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": v_context if v_context else "Reel", "status": "draft"}).execute()
@@ -1526,6 +1537,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
