@@ -1066,8 +1066,8 @@ with tab_analytics:
                 st.success(res)
                 st.rerun()
     
-    # 1. FETCH DATA... (keep the rest of your existing code here)
-    history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(50).execute().data
+    # 1. FETCH DATA (Increased limit to 100 for better analytics)
+    history = supabase.table("social_posts").select("*").eq("status", "posted").not_.is_("likes", "null").order("created_at", desc=True).limit(100).execute().data
     
     if len(history) > 0:
         df = pd.DataFrame(history)
@@ -1103,19 +1103,23 @@ with tab_analytics:
         with c_chart:
             st.write("📊 **Heatmap: Best Times by Day**")
             
-            # Pivot the data: Days as rows, Hours as columns, Score as values
-            # This shows you the "Hot Spots" for each specific day
+            # --- ROBUST HEATMAP LOGIC ---
             try:
-                heatmap = df.pivot_table(index='day_name', columns='hour', values='score', aggfunc='mean')
+                # Pivot the data: Days as rows, Hours as columns, Score as values
+                # fill_value=0 prevents crashes on empty cells
+                heatmap = df.pivot_table(index='day_name', columns='hour', values='score', aggfunc='mean', fill_value=0)
+                
                 # Sort rows by day of week order
                 days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-                heatmap = heatmap.reindex(days_order)
+                # reindex(..., fill_value=0) ensures ALL days appear, even if no data exists for them yet
+                heatmap = heatmap.reindex(days_order, fill_value=0)
                 
                 # Display as a color-coded table (High score = Darker Blue)
-                st.dataframe(heatmap.style.background_gradient(cmap="Blues", axis=None).format("{:.1f}"), use_container_width=True)
+                # format("{:.0f}") removes decimals for cleaner look
+                st.dataframe(heatmap.style.background_gradient(cmap="Blues", axis=None).format("{:.0f}"), use_container_width=True)
             except Exception as e:
                 st.info("Not enough data to build a heatmap yet. Keep posting!")
-                # Fallback to simple chart if pivot fails
+                # Fallback to simple chart if pivot fails completely
                 chart_data = df.groupby('hour')['score'].mean()
                 st.bar_chart(chart_data)
 
@@ -1551,6 +1555,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
