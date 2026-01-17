@@ -498,7 +498,7 @@ with tab_gen:
                 st.session_state.enhanced_topic = ""
                 if st.button("🔄 Refresh"): st.rerun()
 
-# --- TAB 2: UPLOAD & CROP (LINK-SMART EDITION) ---
+# --- TAB 2: UPLOAD & CROP (PREVIEW FIXED) ---
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     
@@ -511,7 +511,7 @@ with tab_upload:
         if "crop_source_name" not in st.session_state: st.session_state.crop_source_name = ""
         if "gallery_files" not in st.session_state: st.session_state.gallery_files = [] 
         if "gallery_page" not in st.session_state: st.session_state.gallery_page = 0
-        if "gallery_origin" not in st.session_state: st.session_state.gallery_origin = None # To track if we are using a Link or Path
+        if "gallery_origin" not in st.session_state: st.session_state.gallery_origin = None 
 
         # Source Options
         source_type = st.radio("Select Source:", ["📂 Upload from Computer", "☁️ Single File Link", "🔎 Browse Dropbox Gallery"], horizontal=True)
@@ -551,18 +551,17 @@ with tab_upload:
                         
                         # LOGIC: Check if it's a LINK or a PATH
                         if folder_input.startswith("http"):
-                            # IT IS A SHARED LINK (like the one you pasted)
+                            # IT IS A SHARED LINK
                             url = folder_input
                             res = dbx.files_list_folder(path="", shared_link=dropbox.files.SharedLink(url=url))
                             st.session_state.gallery_origin = {"type": "link", "url": url}
                         else:
-                            # IT IS A FOLDER PATH (like /Social System)
+                            # IT IS A FOLDER PATH
                             res = dbx.files_list_folder(folder_input)
                             st.session_state.gallery_origin = {"type": "path", "root": folder_input}
 
-                        # Filter images & Sort
+                        # Filter & Sort
                         files = [e for e in res.entries if isinstance(e, dropbox.files.FileMetadata) and e.name.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                        # Sort by client_modified (newest first)
                         files.sort(key=lambda x: x.client_modified, reverse=True)
                         
                         st.session_state.gallery_files = files
@@ -587,16 +586,20 @@ with tab_upload:
                     col = g_cols[i % 3]
                     with col:
                         with st.container(border=True):
-                            # Thumbnail (Tricky with Shared Links, so we stick to icons if Link mode)
-                            if st.session_state.gallery_origin['type'] == 'path':
-                                try:
-                                    dbx = get_dbx()
+                            # --- PREVIEW LOGIC (FIXED) ---
+                            dbx = get_dbx()
+                            try:
+                                if st.session_state.gallery_origin['type'] == 'path':
+                                    # FAST WAY: Get Thumbnail from Path
                                     _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
                                     st.image(res.content, use_container_width=True)
-                                except: st.markdown("🖼️") 
-                            else:
-                                # For shared links, thumbnails are complex, standard icon is safer
-                                st.markdown("🖼️ **Image**")
+                                else:
+                                    # SLOW WAY (But Works for Links): Download file as preview
+                                    url = st.session_state.gallery_origin['url']
+                                    _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
+                                    st.image(res.content, use_container_width=True)
+                            except: 
+                                st.markdown("🖼️") # Fallback if even download fails
 
                             st.caption(file_entry.name[:15]+"...")
                             
@@ -604,16 +607,11 @@ with tab_upload:
                             if st.button("Select", key=f"sel_{file_entry.id}", use_container_width=True):
                                 try:
                                     with st.spinner(f"Downloading..."):
-                                        dbx = get_dbx()
-                                        
                                         # DOWNLOAD LOGIC
                                         if st.session_state.gallery_origin['type'] == 'path':
-                                            # Standard Path Download
                                             _, res = dbx.files_download(file_entry.path_lower)
                                         else:
-                                            # Shared Link Download
                                             url = st.session_state.gallery_origin['url']
-                                            # "path" arg must be relative to the link root, usually just "/Filename.jpg"
                                             _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
                                         
                                         st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(res.content)))
@@ -679,7 +677,6 @@ with tab_upload:
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
-                        # Traffic Lights
                         last_used_str = img.get('last_used_at')
                         status_icon, status_msg = "🟢", "Fresh"
                         if last_used_str:
@@ -1341,6 +1338,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
