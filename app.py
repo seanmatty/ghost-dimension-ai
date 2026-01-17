@@ -580,7 +580,7 @@ with tab_upload:
                 # 🚀 SMART PAGINATION SIZE
                 # Links are slow (download full image), so show fewer. Paths are fast (thumbnails), show more.
                 if st.session_state.gallery_origin['type'] == 'link':
-                    ITEMS_PER_PAGE = 3
+                    ITEMS_PER_PAGE = 6
                 else:
                     ITEMS_PER_PAGE = 12
 
@@ -1369,6 +1369,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
