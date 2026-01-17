@@ -498,7 +498,7 @@ with tab_gen:
                 st.session_state.enhanced_topic = ""
                 if st.button("🔄 Refresh"): st.rerun()
 
-# --- TAB 2: UPLOAD & CROP (PREVIEW FIXED) ---
+# --- TAB 2: UPLOAD & CROP (CACHED & FAST) ---
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     
@@ -506,12 +506,14 @@ with tab_upload:
     with c_up:
         st.subheader("1. Acquire Image")
         
-        # Session State
+        # Session State Setup
         if "crop_source_img" not in st.session_state: st.session_state.crop_source_img = None
         if "crop_source_name" not in st.session_state: st.session_state.crop_source_name = ""
         if "gallery_files" not in st.session_state: st.session_state.gallery_files = [] 
         if "gallery_page" not in st.session_state: st.session_state.gallery_page = 0
         if "gallery_origin" not in st.session_state: st.session_state.gallery_origin = None 
+        # 🚀 NEW: Image Cache to stop reloading
+        if "img_cache" not in st.session_state: st.session_state.img_cache = {}
 
         # Source Options
         source_type = st.radio("Select Source:", ["📂 Upload from Computer", "☁️ Single File Link", "🔎 Browse Dropbox Gallery"], horizontal=True)
@@ -549,6 +551,9 @@ with tab_upload:
                         dbx = get_dbx()
                         files = []
                         
+                        # Reset Cache on new load
+                        st.session_state.img_cache = {}
+
                         # LOGIC: Check if it's a LINK or a PATH
                         if folder_input.startswith("http"):
                             # IT IS A SHARED LINK
@@ -572,8 +577,13 @@ with tab_upload:
 
             # Display the Grid
             if st.session_state.gallery_files:
-                # Pagination
-                ITEMS_PER_PAGE = 9
+                # 🚀 SMART PAGINATION SIZE
+                # Links are slow (download full image), so show fewer. Paths are fast (thumbnails), show more.
+                if st.session_state.gallery_origin['type'] == 'link':
+                    ITEMS_PER_PAGE = 3
+                else:
+                    ITEMS_PER_PAGE = 12
+
                 total_files = len(st.session_state.gallery_files)
                 start_idx = st.session_state.gallery_page * ITEMS_PER_PAGE
                 end_idx = start_idx + ITEMS_PER_PAGE
@@ -586,35 +596,57 @@ with tab_upload:
                     col = g_cols[i % 3]
                     with col:
                         with st.container(border=True):
-                            # --- PREVIEW LOGIC (FIXED) ---
-                            dbx = get_dbx()
-                            try:
-                                if st.session_state.gallery_origin['type'] == 'path':
-                                    # FAST WAY: Get Thumbnail from Path
-                                    _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
-                                    st.image(res.content, use_container_width=True)
-                                else:
-                                    # SLOW WAY (But Works for Links): Download file as preview
-                                    url = st.session_state.gallery_origin['url']
-                                    _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
-                                    st.image(res.content, use_container_width=True)
-                            except: 
-                                st.markdown("🖼️") # Fallback if even download fails
+                            # --- CACHED IMAGE DISPLAY ---
+                            # Check if we already have the bytes in session state
+                            if file_entry.id in st.session_state.img_cache:
+                                st.image(st.session_state.img_cache[file_entry.id], use_container_width=True)
+                            else:
+                                # Not in cache? Fetch it!
+                                try:
+                                    dbx = get_dbx()
+                                    img_bytes = None
+                                    
+                                    if st.session_state.gallery_origin['type'] == 'path':
+                                        # FAST: Thumbnail
+                                        _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
+                                        img_bytes = res.content
+                                    else:
+                                        # SLOW: Full Download (for Links)
+                                        url = st.session_state.gallery_origin['url']
+                                        _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
+                                        img_bytes = res.content
+                                    
+                                    # Save to Cache & Display
+                                    if img_bytes:
+                                        st.session_state.img_cache[file_entry.id] = img_bytes
+                                        st.image(img_bytes, use_container_width=True)
+                                        
+                                except: st.markdown("🖼️") # Fail gracefully
 
                             st.caption(file_entry.name[:15]+"...")
                             
                             # Select Button
                             if st.button("Select", key=f"sel_{file_entry.id}", use_container_width=True):
                                 try:
-                                    with st.spinner(f"Downloading..."):
-                                        # DOWNLOAD LOGIC
-                                        if st.session_state.gallery_origin['type'] == 'path':
+                                    with st.spinner(f"Downloading High-Res..."):
+                                        dbx = get_dbx()
+                                        
+                                        # If we already have the full bytes (Link mode), use them!
+                                        if st.session_state.gallery_origin['type'] == 'link' and file_entry.id in st.session_state.img_cache:
+                                            high_res_bytes = st.session_state.img_cache[file_entry.id]
+                                        
+                                        # Otherwise download fresh high-res (Path mode)
+                                        elif st.session_state.gallery_origin['type'] == 'path':
                                             _, res = dbx.files_download(file_entry.path_lower)
+                                            high_res_bytes = res.content
+                                        
+                                        # Fallback for Link mode if cache missed
                                         else:
                                             url = st.session_state.gallery_origin['url']
                                             _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
+                                            high_res_bytes = res.content
                                         
-                                        st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(res.content)))
+                                        st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(high_res_bytes)))
                                         st.session_state.crop_source_name = file_entry.name
                                         st.rerun()
                                 except Exception as e: st.error(f"Download Failed: {e}")
@@ -700,7 +732,6 @@ with tab_upload:
                         
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
-
 # --- TAB 3: DROPBOX LAB ---
 with tab_dropbox:
     st.subheader("🎥 Source Material Processor")
@@ -1338,6 +1369,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
