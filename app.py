@@ -1101,10 +1101,23 @@ with tab_analytics:
             st.dataframe(df[['caption', 'score', 'views']].sort_values('score', ascending=False).head(5), hide_index=True)
             
         with c_chart:
-            st.write("📊 **Best Hour by Day**")
-            # Create a simple bar chart of Score vs Hour
-            chart_data = df.groupby('hour')['score'].mean()
-            st.bar_chart(chart_data)
+            st.write("📊 **Heatmap: Best Times by Day**")
+            
+            # Pivot the data: Days as rows, Hours as columns, Score as values
+            # This shows you the "Hot Spots" for each specific day
+            try:
+                heatmap = df.pivot_table(index='day_name', columns='hour', values='score', aggfunc='mean')
+                # Sort rows by day of week order
+                days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                heatmap = heatmap.reindex(days_order)
+                
+                # Display as a color-coded table (High score = Darker Blue)
+                st.dataframe(heatmap.style.background_gradient(cmap="Blues", axis=None).format("{:.1f}"), use_container_width=True)
+            except Exception as e:
+                st.info("Not enough data to build a heatmap yet. Keep posting!")
+                # Fallback to simple chart if pivot fails
+                chart_data = df.groupby('hour')['score'].mean()
+                st.bar_chart(chart_data)
 
         # 3. THE BRAIN UPDATE BUTTON
         st.divider()
@@ -1538,6 +1551,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
