@@ -477,7 +477,7 @@ with tab_gen:
                 st.session_state.enhanced_topic = ""
                 if st.button("🔄 Refresh"): st.rerun()
 
-# --- TAB 2: UPLOAD & CROP (ULTIMATE EDITION) ---
+# --- TAB 2: UPLOAD & CROP (LINK-SMART EDITION) ---
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
     
@@ -485,14 +485,15 @@ with tab_upload:
     with c_up:
         st.subheader("1. Acquire Image")
         
-        # Session State for gallery and cropping
+        # Session State
         if "crop_source_img" not in st.session_state: st.session_state.crop_source_img = None
         if "crop_source_name" not in st.session_state: st.session_state.crop_source_name = ""
         if "gallery_files" not in st.session_state: st.session_state.gallery_files = [] 
         if "gallery_page" not in st.session_state: st.session_state.gallery_page = 0
+        if "gallery_origin" not in st.session_state: st.session_state.gallery_origin = None # To track if we are using a Link or Path
 
-        # 3 Options: Computer, Link, or Browse Dropbox
-        source_type = st.radio("Select Source:", ["📂 Upload from Computer", "☁️ Paste Link", "🔎 Browse Dropbox Gallery"], horizontal=True)
+        # Source Options
+        source_type = st.radio("Select Source:", ["📂 Upload from Computer", "☁️ Single File Link", "🔎 Browse Dropbox Gallery"], horizontal=True)
 
         # 🅰️ OPTION A: COMPUTER
         if source_type.startswith("📂"):
@@ -501,7 +502,7 @@ with tab_upload:
                 st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(f))
                 st.session_state.crop_source_name = f.name
 
-        # 🅱️ OPTION B: PASTE LINK
+        # 🅱️ OPTION B: SINGLE FILE LINK
         elif source_type.startswith("☁️"):
             db_link = st.text_input("Paste Direct Image Link", placeholder="https://www.dropbox.com/s/...")
             if st.button("📥 Fetch Image"):
@@ -516,29 +517,42 @@ with tab_upload:
                                 st.success("Loaded!")
                     except Exception as e: st.error(f"Error: {e}")
 
-        # 🅾️ OPTION C: INFINITE DROPBOX GALLERY
+        # 🅾️ OPTION C: SMART GALLERY (Path OR Link)
         else:
-            folder_path = st.text_input("Folder Path", value="/Social System") 
+            folder_input = st.text_input("Folder Path OR Shared Link", value="/Social System") 
             
             # Load/Refresh Button
-            if st.button("🔄 Load / Refresh Gallery"):
+            if st.button("🔄 Load Gallery"):
                 try:
-                    with st.spinner("Fetching file list..."):
+                    with st.spinner("Accessing Dropbox..."):
                         dbx = get_dbx()
-                        # 1. List files
-                        res = dbx.files_list_folder(folder_path)
-                        # 2. Filter images & Sort by Date (Newest First)
+                        files = []
+                        
+                        # LOGIC: Check if it's a LINK or a PATH
+                        if folder_input.startswith("http"):
+                            # IT IS A SHARED LINK (like the one you pasted)
+                            url = folder_input
+                            res = dbx.files_list_folder(path="", shared_link=dropbox.files.SharedLink(url=url))
+                            st.session_state.gallery_origin = {"type": "link", "url": url}
+                        else:
+                            # IT IS A FOLDER PATH (like /Social System)
+                            res = dbx.files_list_folder(folder_input)
+                            st.session_state.gallery_origin = {"type": "path", "root": folder_input}
+
+                        # Filter images & Sort
                         files = [e for e in res.entries if isinstance(e, dropbox.files.FileMetadata) and e.name.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                        files.sort(key=lambda x: x.server_modified, reverse=True)
-                        # 3. Store ALL files in cache (we paginate later)
+                        # Sort by client_modified (newest first)
+                        files.sort(key=lambda x: x.client_modified, reverse=True)
+                        
                         st.session_state.gallery_files = files
-                        st.session_state.gallery_page = 0 # Reset to page 1
+                        st.session_state.gallery_page = 0 # Reset
+                        
                 except Exception as e:
                     st.error(f"Gallery Error: {e}")
 
-            # Display the Grid (If we have files)
+            # Display the Grid
             if st.session_state.gallery_files:
-                # Pagination Logic
+                # Pagination
                 ITEMS_PER_PAGE = 9
                 total_files = len(st.session_state.gallery_files)
                 start_idx = st.session_state.gallery_page * ITEMS_PER_PAGE
@@ -547,41 +561,53 @@ with tab_upload:
                 
                 st.write(f"📂 **Viewing {start_idx + 1}-{min(end_idx, total_files)} of {total_files} images**")
                 
-                # The Grid
                 g_cols = st.columns(3)
                 for i, file_entry in enumerate(current_batch):
                     col = g_cols[i % 3]
                     with col:
                         with st.container(border=True):
-                            # Thumbnail
-                            try:
-                                dbx = get_dbx()
-                                _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
-                                st.image(res.content, use_container_width=True)
-                            except: st.markdown("🖼️") 
+                            # Thumbnail (Tricky with Shared Links, so we stick to icons if Link mode)
+                            if st.session_state.gallery_origin['type'] == 'path':
+                                try:
+                                    dbx = get_dbx()
+                                    _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
+                                    st.image(res.content, use_container_width=True)
+                                except: st.markdown("🖼️") 
+                            else:
+                                # For shared links, thumbnails are complex, standard icon is safer
+                                st.markdown("🖼️ **Image**")
+
+                            st.caption(file_entry.name[:15]+"...")
                             
                             # Select Button
                             if st.button("Select", key=f"sel_{file_entry.id}", use_container_width=True):
                                 try:
-                                    with st.spinner(f"Downloading high-res..."):
-                                        _, res = dbx.files_download(file_entry.path_lower)
+                                    with st.spinner(f"Downloading..."):
+                                        dbx = get_dbx()
+                                        
+                                        # DOWNLOAD LOGIC
+                                        if st.session_state.gallery_origin['type'] == 'path':
+                                            # Standard Path Download
+                                            _, res = dbx.files_download(file_entry.path_lower)
+                                        else:
+                                            # Shared Link Download
+                                            url = st.session_state.gallery_origin['url']
+                                            # "path" arg must be relative to the link root, usually just "/Filename.jpg"
+                                            _, res = dbx.sharing_get_shared_link_file(url=url, path=f"/{file_entry.name}")
+                                        
                                         st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(res.content)))
                                         st.session_state.crop_source_name = file_entry.name
                                         st.rerun()
-                                except: st.error("Failed to load.")
+                                except Exception as e: st.error(f"Download Failed: {e}")
 
                 # Pagination Buttons
                 c_prev, c_page, c_next = st.columns([1, 2, 1])
                 with c_prev:
                     if st.session_state.gallery_page > 0:
-                        if st.button("◀ Prev"):
-                            st.session_state.gallery_page -= 1
-                            st.rerun()
+                        if st.button("◀ Prev"): st.session_state.gallery_page -= 1; st.rerun()
                 with c_next:
                     if end_idx < total_files:
-                        if st.button("Next ▶"):
-                            st.session_state.gallery_page += 1
-                            st.rerun()
+                        if st.button("Next ▶"): st.session_state.gallery_page += 1; st.rerun()
 
         # --- THE CROPPER ---
         if st.session_state.crop_source_img:
@@ -605,7 +631,6 @@ with tab_upload:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
                             tmp.write(buf.getvalue()); tmp_path = tmp.name
                         
-                        # This sends it to Dropbox /Social System/
                         url = upload_to_social_system(tmp_path, final_name)
                         os.remove(tmp_path)
                         
@@ -620,7 +645,7 @@ with tab_upload:
                         else: st.error("Upload failed.")
                 except Exception as e: st.error(f"Error: {e}")
 
-    # --- COLUMN 2: LIBRARY (Standard) ---
+    # --- COLUMN 2: LIBRARY (Unchanged) ---
     with c_lib:
         st.subheader("2. Image Library (Photos Only)")
         u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
@@ -1295,6 +1320,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
