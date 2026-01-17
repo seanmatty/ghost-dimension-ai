@@ -477,45 +477,165 @@ with tab_gen:
                 st.session_state.enhanced_topic = ""
                 if st.button("🔄 Refresh"): st.rerun()
 
-# --- TAB 2: UPLOAD IMAGE ---
+# --- TAB 2: UPLOAD & CROP (ULTIMATE EDITION) ---
 with tab_upload:
     c_up, c_lib = st.columns([1, 1])
-    with c_up:
-        st.subheader("1. Upload")
-        f = st.file_uploader("Photos", type=['jpg', 'png', 'jpeg'])
-        if f:
-            image = ImageOps.exif_transpose(Image.open(f))
-            cropped = st_cropper(image, aspect_ratio=(1,1), box_color='#00ff41')
-            if st.button("✅ SAVE TO DROPBOX", type="primary"):
-                buf = io.BytesIO(); cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
-                fname = f"ev_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                    tmp.write(buf.getvalue()); tmp_path = tmp.name
-                url = upload_to_social_system(tmp_path, fname) #
-                os.remove(tmp_path)
-                supabase.table("uploaded_images").insert({"file_url": url, "filename": fname, "media_type": "image"}).execute()
-                st.success("Saved!"); st.rerun()
     
-with c_lib:
-        st.subheader("2. Image Library (Photos Only)")
+    # --- COLUMN 1: INPUT SOURCE ---
+    with c_up:
+        st.subheader("1. Acquire Image")
         
-        # Strategy & Context Controls
+        # Session State for gallery and cropping
+        if "crop_source_img" not in st.session_state: st.session_state.crop_source_img = None
+        if "crop_source_name" not in st.session_state: st.session_state.crop_source_name = ""
+        if "gallery_files" not in st.session_state: st.session_state.gallery_files = [] 
+        if "gallery_page" not in st.session_state: st.session_state.gallery_page = 0
+
+        # 3 Options: Computer, Link, or Browse Dropbox
+        source_type = st.radio("Select Source:", ["📂 Upload from Computer", "☁️ Paste Link", "🔎 Browse Dropbox Gallery"], horizontal=True)
+
+        # 🅰️ OPTION A: COMPUTER
+        if source_type.startswith("📂"):
+            f = st.file_uploader("Choose Image", type=['jpg', 'png', 'jpeg'])
+            if f:
+                st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(f))
+                st.session_state.crop_source_name = f.name
+
+        # 🅱️ OPTION B: PASTE LINK
+        elif source_type.startswith("☁️"):
+            db_link = st.text_input("Paste Direct Image Link", placeholder="https://www.dropbox.com/s/...")
+            if st.button("📥 Fetch Image"):
+                if db_link:
+                    try:
+                        with st.spinner("Downloading..."):
+                            dl_url = db_link.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                            r = requests.get(dl_url)
+                            if r.status_code == 200:
+                                st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(r.content)))
+                                st.session_state.crop_source_name = f"import_{datetime.now().strftime('%H%M%S')}.jpg"
+                                st.success("Loaded!")
+                    except Exception as e: st.error(f"Error: {e}")
+
+        # 🅾️ OPTION C: INFINITE DROPBOX GALLERY
+        else:
+            folder_path = st.text_input("Folder Path", value="/Social System") 
+            
+            # Load/Refresh Button
+            if st.button("🔄 Load / Refresh Gallery"):
+                try:
+                    with st.spinner("Fetching file list..."):
+                        dbx = get_dbx()
+                        # 1. List files
+                        res = dbx.files_list_folder(folder_path)
+                        # 2. Filter images & Sort by Date (Newest First)
+                        files = [e for e in res.entries if isinstance(e, dropbox.files.FileMetadata) and e.name.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                        files.sort(key=lambda x: x.server_modified, reverse=True)
+                        # 3. Store ALL files in cache (we paginate later)
+                        st.session_state.gallery_files = files
+                        st.session_state.gallery_page = 0 # Reset to page 1
+                except Exception as e:
+                    st.error(f"Gallery Error: {e}")
+
+            # Display the Grid (If we have files)
+            if st.session_state.gallery_files:
+                # Pagination Logic
+                ITEMS_PER_PAGE = 9
+                total_files = len(st.session_state.gallery_files)
+                start_idx = st.session_state.gallery_page * ITEMS_PER_PAGE
+                end_idx = start_idx + ITEMS_PER_PAGE
+                current_batch = st.session_state.gallery_files[start_idx:end_idx]
+                
+                st.write(f"📂 **Viewing {start_idx + 1}-{min(end_idx, total_files)} of {total_files} images**")
+                
+                # The Grid
+                g_cols = st.columns(3)
+                for i, file_entry in enumerate(current_batch):
+                    col = g_cols[i % 3]
+                    with col:
+                        with st.container(border=True):
+                            # Thumbnail
+                            try:
+                                dbx = get_dbx()
+                                _, res = dbx.files_get_thumbnail(file_entry.path_lower, format=dropbox.files.ThumbnailFormat.jpeg, size=dropbox.files.ThumbnailSize.w128h128)
+                                st.image(res.content, use_container_width=True)
+                            except: st.markdown("🖼️") 
+                            
+                            # Select Button
+                            if st.button("Select", key=f"sel_{file_entry.id}", use_container_width=True):
+                                try:
+                                    with st.spinner(f"Downloading high-res..."):
+                                        _, res = dbx.files_download(file_entry.path_lower)
+                                        st.session_state.crop_source_img = ImageOps.exif_transpose(Image.open(io.BytesIO(res.content)))
+                                        st.session_state.crop_source_name = file_entry.name
+                                        st.rerun()
+                                except: st.error("Failed to load.")
+
+                # Pagination Buttons
+                c_prev, c_page, c_next = st.columns([1, 2, 1])
+                with c_prev:
+                    if st.session_state.gallery_page > 0:
+                        if st.button("◀ Prev"):
+                            st.session_state.gallery_page -= 1
+                            st.rerun()
+                with c_next:
+                    if end_idx < total_files:
+                        if st.button("Next ▶"):
+                            st.session_state.gallery_page += 1
+                            st.rerun()
+
+        # --- THE CROPPER ---
+        if st.session_state.crop_source_img:
+            st.divider()
+            st.markdown(f"### ✂️ Cropping: {st.session_state.crop_source_name}")
+            
+            cropped = st_cropper(
+                st.session_state.crop_source_img, 
+                aspect_ratio=(1,1), 
+                box_color='#00ff41',
+                key="uni_cropper"
+            )
+            
+            if st.button("✅ SAVE CROP TO DROPBOX", type="primary"):
+                try:
+                    with st.spinner("Saving to /Social System..."):
+                        buf = io.BytesIO()
+                        cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
+                        final_name = f"crop_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                        
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                            tmp.write(buf.getvalue()); tmp_path = tmp.name
+                        
+                        # This sends it to Dropbox /Social System/
+                        url = upload_to_social_system(tmp_path, final_name)
+                        os.remove(tmp_path)
+                        
+                        if url:
+                            supabase.table("uploaded_images").insert({
+                                "file_url": url, 
+                                "filename": final_name, 
+                                "media_type": "image"
+                            }).execute()
+                            st.success("✅ Saved to Dropbox!")
+                            st.session_state.crop_source_img = None; st.rerun()
+                        else: st.error("Upload failed.")
+                except Exception as e: st.error(f"Error: {e}")
+
+    # --- COLUMN 2: LIBRARY (Standard) ---
+    with c_lib:
+        st.subheader("2. Image Library (Photos Only)")
         u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
-        # 🟢 NEW: Context Input
         u_context = st.text_input("Optional: What is this?", placeholder="e.g. Liverpool Castle ruins...", key="lib_ctx")
 
-        # Fetch Images
-        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).execute().data
+        lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).limit(12).execute().data
         
         if lib:
             cols = st.columns(3)
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
-                        # --- TRAFFIC LIGHT LOGIC ---
+                        # Traffic Lights
                         last_used_str = img.get('last_used_at')
-                        status_icon = "🟢" 
-                        status_msg = "Fresh"
+                        status_icon, status_msg = "🟢", "Fresh"
                         if last_used_str:
                             try:
                                 last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
@@ -529,22 +649,12 @@ with c_lib:
 
                         if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Analyzing..."):
-                                # 🟢 NEW: Inject User Context into Prompt
                                 user_hint = f"USER CONTEXT: {u_context}" if u_context else ""
-                                
-                                vision_prompt = f"""You are the Marketing Lead for 'Ghost Dimension'.
-                                BRAND FACTS: {get_brand_knowledge()}
-                                {user_hint}
-                                TASK: Write a scary, promotional caption. Strategy: {u_strategy}.
-                                IMPORTANT: Output ONLY the final caption text."""
-                                
-                                resp = openai_client.chat.completions.create(
-                                    model="gpt-4o", 
-                                    messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
-                                    max_tokens=400
-                                )
+                                vision_prompt = f"""You are the Marketing Lead for 'Ghost Dimension'. BRAND FACTS: {get_brand_knowledge()} {user_hint} TASK: Write a scary, promotional caption. Strategy: {u_strategy}. IMPORTANT: Output ONLY the final caption text."""
+                                resp = openai_client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], max_tokens=400)
                                 supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": u_context if u_context else "Promotional Upload", "status": "draft"}).execute()
                                 st.success("Draft Created!"); st.rerun()
+                        
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
 
@@ -1185,6 +1295,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
