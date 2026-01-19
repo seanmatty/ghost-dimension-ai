@@ -819,11 +819,34 @@ with tab_dropbox:
                 with c1: cropped = st_cropper(st.session_state.frame_to_crop, aspect_ratio=(1,1), box_color='#00ff41', key="ph_crop")
                 with c2:
                     if st.button("💾 SAVE TO IMG VAULT", type="primary"):
-                        buf = io.BytesIO(); cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
-                        fname = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                        supabase.storage.from_("uploads").upload(fname, buf.getvalue(), {"content-type": "image/jpeg"})
-                        supabase.table("uploaded_images").insert({"file_url": supabase.storage.from_("uploads").get_public_url(fname), "filename": fname, "media_type": "image"}).execute()
-                        st.success("Saved!"); st.session_state.frame_to_crop = None; st.rerun()
+                        try:
+                            with st.spinner("Saving to Dropbox..."):
+                                # 1. Process Image
+                                buf = io.BytesIO()
+                                cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
+                                fname = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                                
+                                # 2. Save to Temp File
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                                    tmp.write(buf.getvalue()); tmp_path = tmp.name
+                                
+                                # 3. UPLOAD TO DROPBOX (Not Supabase!)
+                                url = upload_to_social_system(tmp_path, fname)
+                                os.remove(tmp_path)
+
+                                # 4. Record in Database
+                                if url:
+                                    supabase.table("uploaded_images").insert({
+                                        "file_url": url, 
+                                        "filename": fname, 
+                                        "media_type": "image"
+                                    }).execute()
+                                    st.success("✅ Saved to Dropbox!")
+                                    st.session_state.frame_to_crop = None; st.rerun()
+                                else:
+                                    st.error("Dropbox Upload Failed")
+                        except Exception as e:
+                            st.error(f"Save Error: {e}")
                     if st.button("❌ CANCEL CROP"): st.session_state.frame_to_crop = None; st.rerun()
             else:
                 st.divider()
@@ -1551,6 +1574,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
