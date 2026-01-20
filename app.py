@@ -127,6 +127,7 @@ def upload_to_social_system(local_path, file_name):
 STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
 # --- HELPER FUNCTIONS ---
+@st.cache_data(ttl=3600) # Cache for 1 hour
 def get_best_time_for_day(target_date):
     day_name = target_date.strftime("%A")
     response = supabase.table("strategy").select("best_hour").eq("day", day_name).execute()
@@ -141,6 +142,7 @@ def scrape_website(url):
             return ' '.join([p.text for p in soup.find_all('p')])[:6000]
     except: return None
 
+@st.cache_data(ttl=600) # Cache for 10 minutes
 def get_brand_knowledge():
     response = supabase.table("brand_knowledge").select("fact_summary").eq("status", "approved").execute()
     return "\n".join([f"- {i['fact_summary']}" for i in response.data]) if response.data else ""
@@ -1588,6 +1590,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
