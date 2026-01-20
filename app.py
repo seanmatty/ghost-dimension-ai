@@ -82,10 +82,24 @@ def check_password():
 
 if not check_password(): st.stop()
 
-# 2. SETUP
-openai_client = OpenAI(api_key=st.secrets["OPENAI_KEY"])
-google_client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
-supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+# 2. SETUP (Optimized for Speed)
+@st.cache_resource
+def init_connections():
+    # Connect to OpenAI
+    openai = OpenAI(api_key=st.secrets["OPENAI_KEY"])
+    
+    # Connect to Google Gemini
+    google = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+    
+    # Connect to Supabase
+    supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    
+    return openai, google, supabase
+
+# Load connections once and keep them open
+openai_client, google_client, supabase = init_connections()
+
+# Load simple variables (no need to cache strings)
 MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
 def get_dbx():
@@ -1574,6 +1588,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
