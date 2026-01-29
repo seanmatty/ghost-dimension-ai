@@ -123,9 +123,11 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (AUTO-RESIZE) ---
+# --- THUMBNAIL ENGINE (TEXT WRAPPING) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
-    """Extracts a frame, auto-sizes text to fit width, and draws it."""
+    """Extracts a frame, wraps text to multiple lines, and draws it big."""
+    import textwrap # Import here for convenience
+    
     try:
         # Clean Dropbox Link
         if "dropbox.com" in video_url:
@@ -145,54 +147,53 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
             
-            # 1. Define Max Width (90% of image width with padding)
-            max_width = pil_img.width * 0.90
+            # 1. Setup Font (Target 10% of height)
+            fontsize = int(pil_img.height * 0.10) 
             
-            # 2. Start Big (15% of height)
-            fontsize = int(pil_img.height * 0.15)
-            
-            # Helper to load font safely
-            def load_font_safe(size):
-                font_candidates = [
-                    "arial.ttf", 
-                    "DejaVuSans-Bold.ttf", 
-                    "LiberationSans-Bold.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-                ]
+            def load_font(size):
+                font_candidates = ["arial.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"]
                 for f_name in font_candidates:
-                    try:
-                        return ImageFont.truetype(f_name, size)
-                    except:
-                        continue
+                    try: return ImageFont.truetype(f_name, size)
+                    except: continue
                 return ImageFont.load_default()
-
-            font = load_font_safe(fontsize)
-
-            # 3. MEASURE & SHRINK LOOP
-            # Check how wide the text is. If it's wider than the image, shrink font.
-            bbox = draw.textbbox((0, 0), overlay_text, font=font)
-            text_width = bbox[2] - bbox[0]
-
-            while text_width > max_width and fontsize > 10:
-                fontsize -= 4 # Reduce size
-                font = load_font_safe(fontsize)
-                bbox = draw.textbbox((0, 0), overlay_text, font=font)
-                text_width = bbox[2] - bbox[0]
-
-            # 4. Calculate Center Position
-            text_height = bbox[3] - bbox[1]
-            x = (pil_img.width - text_width) / 2
-            y = (pil_img.height - text_height) / 2
             
-            # 5. Draw Outline (scaled to font size)
-            outline = max(2, int(fontsize / 15)) 
-            for adj_x in range(-outline, outline+1):
-                for adj_y in range(-outline, outline+1):
-                    draw.text((x+adj_x, y+adj_y), overlay_text, font=font, fill="black")
+            font = load_font(fontsize)
             
-            # 6. Draw Text
-            draw.text((x, y), overlay_text, font=font, fill="#00ff41")
+            # 2. Text Wrapping Logic
+            # Estimate how many characters fit per line (Width / Average char width)
+            # This is an approximation. 15-20 chars is usually good for vertical video.
+            avg_char_width = fontsize * 0.5
+            chars_per_line = int(pil_img.width / avg_char_width)
+            
+            # Wrap the text
+            lines = textwrap.wrap(overlay_text, width=chars_per_line)
+            
+            # 3. Calculate Total Block Height (to vertically center)
+            # Get height of a single line
+            sample_bbox = draw.textbbox((0, 0), "A", font=font)
+            line_height = sample_bbox[3] - sample_bbox[1]
+            total_height = (line_height * len(lines)) + (10 * (len(lines) - 1)) # Add 10px gap between lines
+            
+            # Start Y position
+            start_y = (pil_img.height - total_height) / 2
+            
+            # 4. Draw Each Line
+            for i, line in enumerate(lines):
+                # Measure line width to center horizontally
+                line_bbox = draw.textbbox((0, 0), line, font=font)
+                line_w = line_bbox[2] - line_bbox[0]
+                
+                pos_x = (pil_img.width - line_w) / 2
+                pos_y = start_y + (i * (line_height + 10))
+                
+                # Draw Outline
+                outline = max(2, int(fontsize / 15))
+                for adj_x in range(-outline, outline+1):
+                    for adj_y in range(-outline, outline+1):
+                        draw.text((pos_x+adj_x, pos_y+adj_y), line, font=font, fill="black")
+                
+                # Draw Text
+                draw.text((pos_x, pos_y), line, font=font, fill="#00ff41")
 
         return pil_img
     except Exception as e:
@@ -1789,6 +1790,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
