@@ -849,8 +849,20 @@ with tab_upload:
                                 if cap_mode == "✨ Create New":
                                     if u_context: instr = f"MANDATORY: Subject is '{u_context}'."
                                     else: instr = "Analyze the image."
+                                    
                                     prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {instr} Strategy: {u_strat}. Output: Final caption."
-                                    resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}])
+                                    
+                                    # --- FIX: Changed model to 'gpt-4o' for Vision support ---
+                                    resp = openai_client.chat.completions.create(
+                                        model="gpt-4o", 
+                                        messages=[{
+                                            "role": "user", 
+                                            "content": [
+                                                {"type": "text", "text": prompt}, 
+                                                {"type": "image_url", "image_url": {"url": img['file_url']}}
+                                            ]
+                                        }]
+                                    )
                                     final_caption = resp.choices[0].message.content
                                     topic_tag = u_context if u_context else "AI Auto"
                                 
@@ -1739,6 +1751,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
