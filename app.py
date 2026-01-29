@@ -123,11 +123,11 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (FIXED FONT SIZE) ---
+# --- THUMBNAIL ENGINE (AUTO-RESIZE) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
-    """Extracts a frame and draws text on it."""
+    """Extracts a frame, auto-sizes text to fit width, and draws it."""
     try:
-        # Clean Dropbox Link for OpenCV
+        # Clean Dropbox Link
         if "dropbox.com" in video_url:
             video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
         
@@ -138,58 +138,60 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         
         if not ret: return None
 
-        # Convert to PIL Image
+        # Convert to PIL
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img)
         
-        # Add Text if provided
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
             
-            # --- FONT FIX START ---
-            # 1. Set Size: 15% of image height (Big & Bold)
-            fontsize = int(pil_img.height * 0.15) 
+            # 1. Define Max Width (90% of image width with padding)
+            max_width = pil_img.width * 0.90
             
-            font = None
-            # 2. Try to find a valid font on the system
-            # Streamlit Cloud (Linux) usually has DejaVuSans or LiberationSans
-            font_candidates = [
-                "arial.ttf", 
-                "DejaVuSans-Bold.ttf", 
-                "LiberationSans-Bold.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-            ]
+            # 2. Start Big (15% of height)
+            fontsize = int(pil_img.height * 0.15)
             
-            for f_name in font_candidates:
-                try:
-                    font = ImageFont.truetype(f_name, fontsize)
-                    break
-                except:
-                    continue
-            
-            # 3. If all else fails, try default with size (Newer Pillow versions only)
-            if font is None:
-                try:
-                    font = ImageFont.load_default(size=fontsize)
-                except:
-                    font = ImageFont.load_default() # Tiny fallback if old Pillow
-            # --- FONT FIX END ---
+            # Helper to load font safely
+            def load_font_safe(size):
+                font_candidates = [
+                    "arial.ttf", 
+                    "DejaVuSans-Bold.ttf", 
+                    "LiberationSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+                ]
+                for f_name in font_candidates:
+                    try:
+                        return ImageFont.truetype(f_name, size)
+                    except:
+                        continue
+                return ImageFont.load_default()
 
-            # Calculate text position (Centered)
+            font = load_font_safe(fontsize)
+
+            # 3. MEASURE & SHRINK LOOP
+            # Check how wide the text is. If it's wider than the image, shrink font.
             bbox = draw.textbbox((0, 0), overlay_text, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            x = (pil_img.width - text_w) / 2
-            y = (pil_img.height - text_h) / 2
+            text_width = bbox[2] - bbox[0]
+
+            while text_width > max_width and fontsize > 10:
+                fontsize -= 4 # Reduce size
+                font = load_font_safe(fontsize)
+                bbox = draw.textbbox((0, 0), overlay_text, font=font)
+                text_width = bbox[2] - bbox[0]
+
+            # 4. Calculate Center Position
+            text_height = bbox[3] - bbox[1]
+            x = (pil_img.width - text_width) / 2
+            y = (pil_img.height - text_height) / 2
             
-            # Draw Thick Outline (Black)
-            outline = int(fontsize / 15) # Dynamic outline thickness
+            # 5. Draw Outline (scaled to font size)
+            outline = max(2, int(fontsize / 15)) 
             for adj_x in range(-outline, outline+1):
                 for adj_y in range(-outline, outline+1):
                     draw.text((x+adj_x, y+adj_y), overlay_text, font=font, fill="black")
             
-            # Draw Text (Green)
+            # 6. Draw Text
             draw.text((x, y), overlay_text, font=font, fill="#00ff41")
 
         return pil_img
@@ -1787,6 +1789,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
