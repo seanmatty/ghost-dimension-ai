@@ -292,10 +292,10 @@ def save_ai_image_to_storage(image_bytes):
         st.error(f"Image Save failed: {e}"); return None
 
 # --- MOVED TO LEFT MARGIN (GLOBAL SCOPE) ---
-def upload_to_youtube_direct(video_path, title, description, scheduled_time=None):
+def upload_to_youtube_direct(video_path, title, description, scheduled_time=None, thumbnail_path=None):
     """
     Uploads directly to YouTube using local keys. 
-    Handles both Immediate and Scheduled uploads.
+    Handles Immediate/Scheduled uploads AND Custom Thumbnails.
     """
     try:
         # 1. Rebuild Credentials
@@ -333,7 +333,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         if publish_at:
             body['status']['publishAt'] = publish_at
 
-        # 4. Upload
+        # 4. Upload Video
         media = MediaFileUpload(video_path, chunksize=1024*1024, resumable=True)
         request = youtube.videos().insert(
             part=','.join(body.keys()),
@@ -345,7 +345,20 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         while response is None:
             status, response = request.next_chunk()
         
-        return f"https://youtu.be/{response['id']}"
+        video_id = response['id']
+
+        # 5. Upload Thumbnail (If provided)
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            try:
+                st.toast("🖼️ Uploading Thumbnail to YouTube...")
+                youtube.thumbnails().set(
+                    videoId=video_id,
+                    media_body=MediaFileUpload(thumbnail_path)
+                ).execute()
+            except Exception as e:
+                st.error(f"Thumbnail Upload Failed: {e}")
+        
+        return f"https://youtu.be/{video_id}"
 
     except Exception as e:
         st.error(f"YouTube Upload Failed: {e}")
@@ -1814,6 +1827,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
