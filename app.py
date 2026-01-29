@@ -1447,10 +1447,14 @@ with d1:
             # --- DETECT MEDIA TYPE ---
             is_video = ".mp4" in p['image_url'] or "youtu" in p['image_url']
             
-            # --- LEFT: PREVIEW ---
+            # --- LEFT: PREVIEW (Now shows Custom Thumb!) ---
             with col1: 
                 if is_video: 
-                    st.video(p['image_url']); st.caption("🎥 VIDEO REEL")
+                    st.video(p['image_url'])
+                    if p.get('thumbnail_url'):
+                        st.image(p['thumbnail_url'], caption="✅ Custom Thumb Attached", width=150)
+                    else:
+                        st.caption("🎥 No Custom Thumb")
                 else: 
                     st.image(p['image_url'], use_container_width=True); st.caption("📸 PHOTO POST")
             
@@ -1465,143 +1469,90 @@ with d1:
                 
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
+                # --- SHARED POSTING LOGIC ---
+                # This function prevents duplicate code for Schedule vs Post Now
+                def execute_post(is_scheduled):
+                    target_dt = datetime.combine(din, tin) if is_scheduled else None
+                    now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                    final_time = str(target_dt) if is_scheduled else now_utc
+                    yt_id = None
+                    
+                    # --- PATH A: VIDEO (YOUTUBE DIRECT) ---
+                    if is_video:
+                        # 1. Generate Title
+                        with st.spinner("🧠 AI generating title..."):
+                            yt_title = generate_viral_title(cap)
+                        
+                        # 2. Download Media Assets (Video + Thumb)
+                        with st.spinner("⬇️ Downloading Assets..."):
+                            # Video
+                            dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                            r = requests.get(dl_link)
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
+                                tmp_vid.write(r.content); local_path = tmp_vid.name
+                            
+                            # Thumbnail (NEW LOGIC)
+                            local_thumb_path = None
+                            if p.get('thumbnail_url'):
+                                t_link = p['thumbnail_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+                                t_r = requests.get(t_link)
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_img:
+                                    tmp_img.write(t_r.content); local_thumb_path = tmp_img.name
+
+                        # 3. Upload to YouTube
+                        with st.spinner("🚀 Uploading to YouTube..."):
+                            # We pass the thumbnail path here!
+                            yt_link = upload_to_youtube_direct(
+                                local_path, 
+                                yt_title, 
+                                cap, 
+                                target_dt, 
+                                thumbnail_path=local_thumb_path 
+                            )
+                            
+                            # Cleanup Temp Files
+                            os.remove(local_path)
+                            if local_thumb_path: os.remove(local_thumb_path)
+
+                            if yt_link:
+                                yt_id = yt_link.split("/")[-1]
+                                st.success(f"✅ YouTube Done! ID: {yt_id}")
+                    
+                    # --- DB UPDATE & MAKE TRIGGER ---
+                    # Update Supabase
+                    supabase.table("social_posts").update({
+                        "status": "scheduled",
+                        "caption": cap,
+                        "platform_post_id": yt_id, 
+                        "scheduled_time": final_time
+                    }).eq("id", p['id']).execute()
+                    
+                    # Update Traffic Light
+                    supabase.table("uploaded_images").update({
+                        "last_used_at": datetime.utcnow().isoformat()
+                    }).eq("file_url", p['image_url']).execute()
+                    
+                    # Trigger Make (For FB/Insta)
+                    # Make will pull the 'thumbnail_url' from Supabase automatically if mapped correctly
+                    st.toast("🤖 Triggering Make for Meta...")
+                    try:
+                        url = f"https://eu1.make.com/api/v2/scenarios/{st.secrets['MAKE_SCENARIO_ID']}/run"
+                        headers = {"Authorization": f"Token {st.secrets['MAKE_API_TOKEN']}"}
+                        requests.post(url, headers=headers)
+                    except: pass
+                    
+                    st.success("✨ Process Complete!"); st.rerun()
+
+                # --- BUTTONS ---
                 # 📅 SCHEDULE BUTTON
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
-                        target_dt = datetime.combine(din, tin)
-                        yt_id = None
-                        
-                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
-                        if is_video:
-                            # 1. Generate Viral Title
-                            with st.spinner("🧠 AI generating viral title..."):
-                                yt_title = generate_viral_title(cap)
-                                st.toast(f"Title: {yt_title}")
-
-                            with st.spinner(f"🚀 Step 2: Uploading to YouTube..."):
-                                # 2. Download from Dropbox to Temp
-                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
-                                r = requests.get(dl_link)
-                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
-                                    tmp_vid.write(r.content); local_path = tmp_vid.name
-
-                                # 3. Upload to YouTube (Private Scheduled)
-                                yt_link = upload_to_youtube_direct(local_path, yt_title, cap, target_dt)
-                                os.remove(local_path)
-
-                                if yt_link:
-                                    yt_id = yt_link.split("/")[-1]
-                                    st.success(f"✅ YouTube Done! Title: {yt_title}")
-                                    
-                                    # 4. Update DB for MAKE (Keep Original Caption for FB/Insta!)
-                                    supabase.table("social_posts").update({
-                                        "status": "scheduled",
-                                        "caption": cap,
-                                        "platform_post_id": yt_id,
-                                        "scheduled_time": str(target_dt)
-                                    }).eq("id", p['id']).execute()
-                                    
-                                    # 🟢 UPDATE TRAFFIC LIGHT (Video)
-                                    supabase.table("uploaded_images").update({
-                                        "last_used_at": datetime.utcnow().isoformat()
-                                    }).eq("file_url", p['image_url']).execute()
-                                    
-                                    st.toast("🤖 Waking up Make for FB/Insta...")
-                                    
-                                    # 5. Trigger Make
-                                    try:
-                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
-                                        api_token = st.secrets["MAKE_API_TOKEN"]
-                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                                        headers = {"Authorization": f"Token {api_token}"}
-                                        requests.post(url, headers=headers)
-                                    except: pass
-                                    st.rerun()
-                        
-                        # --- PATH B: IMAGE (STANDARD MAKE) ---
-                        else:
-                            supabase.table("social_posts").update({
-                                "caption": cap, "scheduled_time": f"{din} {tin}", "status": "scheduled"
-                            }).eq("id", p['id']).execute()
-
-                            # 🟢 UPDATE TRAFFIC LIGHT (Image)
-                            supabase.table("uploaded_images").update({
-                                "last_used_at": datetime.utcnow().isoformat()
-                            }).eq("file_url", p['image_url']).execute()
-
-                            st.toast("✅ Image Scheduled! Make will pick this up.")
-                            st.rerun()
+                        execute_post(is_scheduled=True)
 
                 # 🚀 POST NOW BUTTON
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
-                        now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                        yt_id = None
-                        
-                        # --- PATH A: VIDEO (HYBRID HANDOFF) ---
-                        if is_video:
-                            # 1. Generate Viral Title
-                            with st.spinner("🧠 AI generating viral title..."):
-                                yt_title = generate_viral_title(cap)
-                                st.toast(f"Title: {yt_title}")
-
-                            with st.spinner("🚀 Step 2: Uploading to YouTube..."):
-                                dl_link = p['image_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
-                                r = requests.get(dl_link)
-                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
-                                    tmp_vid.write(r.content); local_path = tmp_vid.name
-
-                                # Upload Immediate
-                                yt_link = upload_to_youtube_direct(local_path, yt_title, cap, None)
-                                os.remove(local_path)
-
-                                if yt_link:
-                                    yt_id = yt_link.split("/")[-1]
-                                    st.success(f"✅ YouTube Live! Title: {yt_title}")
-                                    
-                                    # Update DB for MAKE
-                                    supabase.table("social_posts").update({
-                                        "status": "scheduled",
-                                        "caption": cap,
-                                        "platform_post_id": yt_id,
-                                        "scheduled_time": now_utc
-                                    }).eq("id", p['id']).execute()
-                                    
-                                    # 🟢 UPDATE TRAFFIC LIGHT (Video)
-                                    supabase.table("uploaded_images").update({
-                                        "last_used_at": datetime.utcnow().isoformat()
-                                    }).eq("file_url", p['image_url']).execute()
-                                    
-                                    # Wake Make
-                                    try:
-                                        scenario_id = st.secrets["MAKE_SCENARIO_ID"]
-                                        api_token = st.secrets["MAKE_API_TOKEN"]
-                                        url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                                        headers = {"Authorization": f"Token {api_token}"}
-                                        requests.post(url, headers=headers)
-                                    except: pass
-                                    st.rerun()
-
-                        # --- PATH B: IMAGE (STANDARD MAKE) ---
-                        else:
-                            st.spinner("Waking up the Robot...")
-                            supabase.table("social_posts").update({
-                                "caption": cap, "scheduled_time": now_utc, "status": "scheduled"
-                            }).eq("id", p['id']).execute()
-                            
-                            # 🟢 UPDATE TRAFFIC LIGHT (Image)
-                            supabase.table("uploaded_images").update({
-                                "last_used_at": datetime.utcnow().isoformat()
-                            }).eq("file_url", p['image_url']).execute()
-                            
-                            try:
-                                scenario_id = st.secrets["MAKE_SCENARIO_ID"]
-                                api_token = st.secrets["MAKE_API_TOKEN"]
-                                url = f"https://eu1.make.com/api/v2/scenarios/{scenario_id}/run"
-                                headers = {"Authorization": f"Token {api_token}"}
-                                requests.post(url, headers=headers)
-                            except: pass
-                            st.rerun()
+                        execute_post(is_scheduled=False)
 
                 # 🗑️ DISCARD
                 with b_col3:
@@ -1827,6 +1778,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
