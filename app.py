@@ -123,7 +123,7 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE ---
+# --- THUMBNAIL ENGINE (FIXED FONT SIZE) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
     """Extracts a frame and draws text on it."""
     try:
@@ -145,14 +145,36 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         # Add Text if provided
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
-            # Dynamic font size (approx 10% of height)
-            fontsize = int(pil_img.height / 10) 
-            try:
-                # Try to load a standard font
-                font = ImageFont.truetype("arial.ttf", fontsize)
-            except:
-                # Fallback if arial isn't found
-                font = ImageFont.load_default()
+            
+            # --- FONT FIX START ---
+            # 1. Set Size: 15% of image height (Big & Bold)
+            fontsize = int(pil_img.height * 0.15) 
+            
+            font = None
+            # 2. Try to find a valid font on the system
+            # Streamlit Cloud (Linux) usually has DejaVuSans or LiberationSans
+            font_candidates = [
+                "arial.ttf", 
+                "DejaVuSans-Bold.ttf", 
+                "LiberationSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+            ]
+            
+            for f_name in font_candidates:
+                try:
+                    font = ImageFont.truetype(f_name, fontsize)
+                    break
+                except:
+                    continue
+            
+            # 3. If all else fails, try default with size (Newer Pillow versions only)
+            if font is None:
+                try:
+                    font = ImageFont.load_default(size=fontsize)
+                except:
+                    font = ImageFont.load_default() # Tiny fallback if old Pillow
+            # --- FONT FIX END ---
 
             # Calculate text position (Centered)
             bbox = draw.textbbox((0, 0), overlay_text, font=font)
@@ -161,18 +183,19 @@ def create_thumbnail(video_url, time_sec, overlay_text):
             x = (pil_img.width - text_w) / 2
             y = (pil_img.height - text_h) / 2
             
-            # Draw Outline (Black) then Text (Green brand color)
-            outline = 3
+            # Draw Thick Outline (Black)
+            outline = int(fontsize / 15) # Dynamic outline thickness
             for adj_x in range(-outline, outline+1):
                 for adj_y in range(-outline, outline+1):
                     draw.text((x+adj_x, y+adj_y), overlay_text, font=font, fill="black")
+            
+            # Draw Text (Green)
             draw.text((x, y), overlay_text, font=font, fill="#00ff41")
 
         return pil_img
     except Exception as e:
         st.error(f"Thumbnail Error: {e}")
         return None
-
 # --- GLOBAL OPTIONS ---
 STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
@@ -1764,6 +1787,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
