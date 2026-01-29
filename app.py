@@ -10,7 +10,7 @@ from datetime import datetime, time, timedelta
 from bs4 import BeautifulSoup
 import random
 import urllib.parse
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import io
 from streamlit_cropper import st_cropper 
 import cv2
@@ -123,10 +123,74 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
+# --- THUMBNAIL ENGINE ---
+def create_thumbnail(video_url, time_sec, overlay_text):
+    """Extracts a frame and draws text on it."""
+    try:
+        # Clean Dropbox Link for OpenCV
+        if "dropbox.com" in video_url:
+            video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+        
+        cap = cv2.VideoCapture(video_url)
+        cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret: return None
+
+        # Convert to PIL Image
+        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(img)
+        
+        # Add Text if provided
+        if overlay_text:
+            draw = ImageDraw.Draw(pil_img)
+            # Dynamic font size (approx 10% of height)
+            fontsize = int(pil_img.height / 10) 
+            try:
+                # Try to load a standard font
+                font = ImageFont.truetype("arial.ttf", fontsize)
+            except:
+                # Fallback if arial isn't found
+                font = ImageFont.load_default()
+
+            # Calculate text position (Centered)
+            bbox = draw.textbbox((0, 0), overlay_text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            x = (pil_img.width - text_w) / 2
+            y = (pil_img.height - text_h) / 2
+            
+            # Draw Outline (Black) then Text (Green brand color)
+            outline = 3
+            for adj_x in range(-outline, outline+1):
+                for adj_y in range(-outline, outline+1):
+                    draw.text((x+adj_x, y+adj_y), overlay_text, font=font, fill="black")
+            draw.text((x, y), overlay_text, font=font, fill="#00ff41")
+
+        return pil_img
+    except Exception as e:
+        st.error(f"Thumbnail Error: {e}")
+        return None
+
 # --- GLOBAL OPTIONS ---
 STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
 # --- HELPER FUNCTIONS ---
+@st.cache_data(ttl=300)
+def fetch_fresh_inspiration():
+    """Fetches raw ideas for the Review Tab."""
+    try:
+        return supabase.table("inspiration_vault").select("*").eq("status", "fresh").order("created_at", desc=True).limit(20).execute().data
+    except: return []
+
+@st.cache_data(ttl=300)
+def fetch_approved_inspiration():
+    """Fetches approved ideas for the Library/Vault tabs."""
+    try:
+        return supabase.table("inspiration_vault").select("*").eq("status", "approved").order("created_at", desc=True).limit(50).execute().data
+    except: return []
+
 @st.cache_data(ttl=3600) # Cache for 1 hour
 def get_best_time_for_day(target_date):
     day_name = target_date.strftime("%A")
@@ -434,7 +498,7 @@ st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIM
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # TABS:
-tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS"])
+tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics, tab_inspo = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS", "💡 INSPO"])
 
 # --- TAB 1: NANO GENERATOR ---
 with tab_gen:
@@ -716,89 +780,97 @@ with tab_upload:
     with c_lib:
         st.subheader("2. Image Library (Photos Only)")
         
-        # 1. Inputs
-        u_strategy = st.selectbox("Strategy for Drafts", STRATEGY_OPTIONS, key="lib_strat")
-        u_context = st.text_input("Optional: What is this?", placeholder="e.g. Liverpool Castle ruins...", key="lib_ctx")
-
-        # 2. Pagination State
+        # 1. Pagination State
         if 'lib_page' not in st.session_state: st.session_state.lib_page = 0
         LIB_PAGE_SIZE = 9
-
-        # 3. Get Total Count (for Next button logic)
         try:
             count_res = supabase.table("uploaded_images").select("id", count="exact").eq("media_type", "image").execute()
             total_lib_imgs = count_res.count if count_res.count else 0
         except: total_lib_imgs = 0
 
-        # 4. Calculate Range
+        # 2. Fetch Data
         start_idx = st.session_state.lib_page * LIB_PAGE_SIZE
         end_idx = start_idx + LIB_PAGE_SIZE - 1
-
-        # 5. Fetch Data (Slice)
         lib = supabase.table("uploaded_images").select("*").eq("media_type", "image").order("created_at", desc=True).range(start_idx, end_idx).execute().data
-        
-        # 6. Pagination Controls
+
+        # 3. Controls
         c_prev, c_info, c_next = st.columns([1, 2, 1])
         with c_prev:
-            if st.session_state.lib_page > 0:
-                if st.button("◀ Prev", key="lib_prev", use_container_width=True):
-                    st.session_state.lib_page -= 1
-                    st.rerun()
+            if st.session_state.lib_page > 0 and st.button("◀ Prev", key="lib_prev", use_container_width=True):
+                st.session_state.lib_page -= 1; st.rerun()
         with c_info:
             st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em; padding-top: 5px;'>{start_idx+1}-{min(end_idx+1, total_lib_imgs)} of {total_lib_imgs}</div>", unsafe_allow_html=True)
         with c_next:
-            if total_lib_imgs > (end_idx + 1):
-                if st.button("Next ▶", key="lib_next", use_container_width=True):
-                    st.session_state.lib_page += 1
-                    st.rerun()
+            if total_lib_imgs > (end_idx + 1) and st.button("Next ▶", key="lib_next", use_container_width=True):
+                st.session_state.lib_page += 1; st.rerun()
 
         st.divider()
 
-        # 7. Render Grid
+        # 4. Fetch Approved Trends ONCE
+        approved_ideas = fetch_approved_inspiration()
+        viral_map = {f"🔥 {i['source_channel']}: {i['ai_suggestion'][:30]}...": i for i in approved_ideas} if approved_ideas else {}
+
+        # 5. Render Grid
         if lib:
             cols = st.columns(3)
             for idx, img in enumerate(lib):
                 with cols[idx % 3]: 
                     with st.container(border=True):
-                        # Traffic Light Logic
-                        last_used_str = img.get('last_used_at')
-                        status_icon, status_msg = "🟢", "Fresh"
-                        if last_used_str:
-                            try:
-                                last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
-                                days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
-                                if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d ago"
-                                else: status_icon, status_msg = "🟢", f"{days_ago}d ago"
-                            except: status_msg = "Unknown"
-
+                        # Image & Status
                         st.image(img['file_url'], use_container_width=True)
-                        st.markdown(f"**{status_icon} {status_msg}**")
+                        last_used_str = img.get('last_used_at')
+                        status_icon = "🟢" if not last_used_str else "🔴"
+                        st.markdown(f"**{status_icon} Status**")
 
-                        # Draft Button (With your 'Mandatory' Fix)
-                        if st.button("✨ DRAFT", key=f"g_{img['id']}", type="primary"):
-                            with st.spinner("Analyzing..."):
-                                # Instruction Strength Logic
-                                if u_context:
-                                    context_instruction = f"MANDATORY INSTRUCTION: The subject of this image is '{u_context}'. You MUST write the caption about '{u_context}' specifically. Do not write a generic brand post."
-                                else:
-                                    context_instruction = "Analyze the image details yourself."
+                        # --- 🔀 THE CHOICE: AI vs VIRAL ---
+                        cap_mode = st.radio("Mode:", ["✨ Create New", "🔥 Viral Trend"], horizontal=True, label_visibility="collapsed", key=f"cm_{img['id']}")
+                        
+                        final_caption = ""
+                        topic_tag = "Unknown"
 
-                                vision_prompt = f"""
-                                You are the Marketing Lead for 'Ghost Dimension'. 
-                                BRAND FACTS: {get_brand_knowledge()} 
-                                {context_instruction}
-                                TASK: Write a scary, engaging social media caption. 
-                                STRATEGY: {u_strategy}. 
-                                IMPORTANT: Output ONLY the final caption text.
-                                """
+                        if cap_mode == "✨ Create New":
+                            # Standard AI Workflow
+                            u_strat = st.selectbox("Style", STRATEGY_OPTIONS, key=f"st_{img['id']}", label_visibility="collapsed")
+                            u_context = st.text_input("Context?", placeholder="e.g. Castle...", key=f"ctx_{img['id']}")
+                        else:
+                            # Viral Workflow
+                            if viral_map:
+                                sel_trend = st.selectbox("Pick Approved Trend:", list(viral_map.keys()), key=f"vt_{img['id']}", label_visibility="collapsed")
+                                chosen_idea = viral_map[sel_trend]
+                                st.caption(f"📝 {chosen_idea['ai_suggestion'][:100]}...")
+                                final_caption = chosen_idea['ai_suggestion']
+                            else:
+                                st.warning("No approved trends in Tab 6.")
+
+                        # DRAFT BUTTON
+                        if st.button("🚀 DRAFT", key=f"g_{img['id']}", type="primary"):
+                            with st.spinner("Processing..."):
+                                # LOGIC A: AI GENERATION
+                                if cap_mode == "✨ Create New":
+                                    if u_context: instr = f"MANDATORY: Subject is '{u_context}'."
+                                    else: instr = "Analyze the image."
+                                    prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {instr} Strategy: {u_strat}. Output: Final caption."
+                                    resp = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}])
+                                    final_caption = resp.choices[0].message.content
+                                    topic_tag = u_context if u_context else "AI Auto"
                                 
-                                resp = openai_client.chat.completions.create(
-                                    model="gpt-4o", 
-                                    messages=[{"role": "user", "content": [{"type": "text", "text": vision_prompt}, {"type": "image_url", "image_url": {"url": img['file_url']}}]}], 
-                                    max_tokens=400
-                                )
-                                supabase.table("social_posts").insert({"caption": resp.choices[0].message.content, "image_url": img['file_url'], "topic": u_context if u_context else "Promotional Upload", "status": "draft"}).execute()
-                                st.success("Draft Created!"); st.rerun()
+                                # LOGIC B: VIRAL TREND
+                                else:
+                                    topic_tag = "Viral Trend"
+                                    # Mark as 'used' so it leaves the list
+                                    if viral_map:
+                                        supabase.table("inspiration_vault").update({"status": "used"}).eq("id", viral_map[sel_trend]['id']).execute()
+                                        st.cache_data.clear()
+
+                                # Save Draft
+                                if final_caption:
+                                    supabase.table("social_posts").insert({
+                                        "caption": final_caption, 
+                                        "image_url": img['file_url'], 
+                                        "topic": topic_tag, 
+                                        "status": "draft"
+                                    }).execute()
+                                    st.success("Draft Created!"); st.rerun()
                         
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
@@ -996,103 +1068,133 @@ with tab_dropbox:
                 
                 if st.button("❌ DISCARD PREVIEW", key="man_del"):
                     os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
-# --- TAB 4: VIDEO VAULT (SPACED & SAFE) ---
+# --- TAB 4: VIDEO VAULT (VIRAL + THUMBNAIL + SPEED) ---
 with tab_video_vault:
-    # 1. Header & Global Strategy
     c_title, c_strat = st.columns([2, 1])
-    with c_title:
-        st.subheader("📼 Video Reel Library")
-    with c_strat:
+    with c_title: st.subheader("📼 Video Reel Library")
+    with c_strat: 
+        # Only used if "AI Generate" mode is selected
         v_strategy = st.selectbox("Global Strategy", STRATEGY_OPTIONS, label_visibility="collapsed")
 
-    # 2. Pagination State
+    # 1. Pagination
     if 'vid_page' not in st.session_state: st.session_state.vid_page = 0
     VID_PAGE_SIZE = 8 
-
-    # 3. Get Total Count
     try:
         count_res = supabase.table("uploaded_images").select("id", count="exact").eq("media_type", "video").execute()
         total_vids = count_res.count if count_res.count else 0
     except: total_vids = 0
-
-    # 4. Calculate Range
     start_idx = st.session_state.vid_page * VID_PAGE_SIZE
     end_idx = start_idx + VID_PAGE_SIZE - 1
-
-    # 5. Fetch Data
     videos = supabase.table("uploaded_images").select("*").eq("media_type", "video").order("created_at", desc=True).range(start_idx, end_idx).execute().data
     
-    # 6. Pagination Controls
+    # 2. Controls
     c_prev, c_info, c_next = st.columns([1, 2, 1])
     with c_prev:
-        if st.session_state.vid_page > 0:
-            if st.button("◀ Prev", key="vid_prev", use_container_width=True):
-                st.session_state.vid_page -= 1
-                st.rerun()
-    with c_info:
-        st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em; padding-top: 5px;'>{start_idx+1}-{min(end_idx+1, total_vids)} of {total_vids} reels</div>", unsafe_allow_html=True)
+        if st.session_state.vid_page > 0 and st.button("◀ Prev", key="vid_prev", use_container_width=True):
+            st.session_state.vid_page -= 1; st.rerun()
+    with c_info: st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em; padding-top: 5px;'>{start_idx+1}-{min(end_idx+1, total_vids)} of {total_vids} reels</div>", unsafe_allow_html=True)
     with c_next:
-        if total_vids > (end_idx + 1):
-            if st.button("Next ▶", key="vid_next", use_container_width=True):
-                st.session_state.vid_page += 1
-                st.rerun()
+        if total_vids > (end_idx + 1) and st.button("Next ▶", key="vid_next", use_container_width=True):
+            st.session_state.vid_page += 1; st.rerun()
 
     st.divider()
 
-    # 7. Render Grid
+    # 3. Fetch Approved Viral Ideas (Once for the page)
+    # Ensure you added the fetch_approved_inspiration() helper function at the top of your script!
+    approved_ideas = fetch_approved_inspiration()
+    viral_map = {f"🔥 {i['source_channel']}: {i['ai_suggestion'][:30]}...": i for i in approved_ideas} if approved_ideas else {}
+
+    # 4. Render Grid
     if videos:
         cols = st.columns(4)
         for idx, vid in enumerate(videos):
             with cols[idx % 4]: 
                 with st.container(border=True):
-                    # 1. Video Player
-                    st.video(vid['file_url'])
+                    # --- SPEED FIX: Only load video if asked ---
+                    load_player = st.checkbox("▶️ Watch", key=f"play_{vid['id']}")
+                    if load_player:
+                        st.video(vid['file_url'])
+                    else:
+                        st.info("📼 Reel Ready")
                     
-                    # 2. Safety Spacer (Forces gap so video doesn't cover text)
                     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-                    # 3. Traffic Light Logic
+                    # Traffic Light
                     last_used_str = vid.get('last_used_at')
-                    status_icon, status_msg = "🟢", "Fresh"
-                    if last_used_str:
-                        try:
-                            last_used_date = datetime.fromisoformat(last_used_str.replace('Z', '+00:00'))
-                            days_ago = (datetime.now(last_used_date.tzinfo) - last_used_date).days
-                            if days_ago < 30: status_icon, status_msg = "🔴", f"{days_ago}d"
-                            else: status_icon, status_msg = "🟢", f"{days_ago}d"
-                        except: status_msg = "?"
+                    status_icon = "🟢" if not last_used_str else "🔴"
+                    st.markdown(f"**{status_icon} Status**")
+
+                    # --- CAPTION MODE TOGGLE ---
+                    cap_mode = st.radio("Source:", ["✨ AI Gen", "🔥 Viral Trend"], horizontal=True, label_visibility="collapsed", key=f"vm_{vid['id']}")
                     
-                    # Display Status
-                    st.markdown(f"**{status_icon} {status_msg}**")
+                    final_caption = ""
+                    topic_tag = "Unknown"
 
-                    # 4. Context Input
-                    v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
-
-                    # 5. Actions
-                    if st.button("✨ CAPTION", key=f"vcap_{vid['id']}", use_container_width=True):
-                        # Instruction Logic
-                        if v_context:
-                            context_instruction = f"MANDATORY INSTRUCTION: The subject is '{v_context}'. You MUST write the caption about '{v_context}'."
+                    if cap_mode == "✨ AI Gen":
+                        v_context = st.text_input("Context", placeholder="e.g. EVP...", key=f"vctx_{vid['id']}", label_visibility="collapsed")
+                    else:
+                        if viral_map:
+                            sel_trend = st.selectbox("Pick Approved:", list(viral_map.keys()), key=f"vtr_{vid['id']}", label_visibility="collapsed")
+                            chosen_idea = viral_map[sel_trend]
+                            st.caption(f"📝 {chosen_idea['ai_suggestion'][:80]}...")
+                            final_caption = chosen_idea['ai_suggestion']
                         else:
-                            context_instruction = "Analyze the visual evidence yourself."
-                        
-                        prompt = f"""
-                        You are the Social Media Lead for 'Ghost Dimension'.
-                        BRAND FACTS: {get_brand_knowledge()}
-                        {context_instruction}
-                        TASK: Write a caption for this video.
-                        STRATEGY: {v_strategy}
-                        IMPORTANT: Output ONLY the final caption text.
-                        """
-                        
-                        cap = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
-                        supabase.table("social_posts").insert({"caption": cap, "image_url": vid['file_url'], "topic": v_context if v_context else "Reel", "status": "draft"}).execute()
-                        st.success("Draft Created!")
+                            st.warning("No approved trends.")
+
+                    # --- THUMBNAIL EDITOR ---
+                    # Only works if you added the create_thumbnail function at the top of your script!
+                    with st.expander("🎨 Thumbnail"):
+                        thumb_time = st.slider("Sec", 0, 60, 0, key=f"ts_{vid['id']}")
+                        thumb_text = st.text_input("Text", key=f"tt_{vid['id']}")
+                        if st.button("👁️ Preview", key=f"tp_{vid['id']}"):
+                            t_img = create_thumbnail(vid['file_url'], thumb_time, thumb_text)
+                            if t_img:
+                                st.image(t_img); st.session_state[f"thumb_{vid['id']}"] = t_img
+
+                    # --- DRAFT ACTION ---
+                    if st.button("🚀 DRAFT", key=f"vcap_{vid['id']}", use_container_width=True):
+                        with st.spinner("Processing..."):
+                            # 1. Prepare Caption
+                            if cap_mode == "✨ AI Gen":
+                                if v_context: context_instr = f"MANDATORY: Subject is '{v_context}'."
+                                else: context_instr = "Analyze visual evidence."
+                                prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {context_instr} Strategy: {v_strategy}. Output: Final caption only."
+                                final_caption = openai_client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                                topic_tag = v_context if v_context else "AI Video"
+                            else:
+                                topic_tag = "Viral Video"
+                                # Mark viral idea as used
+                                if viral_map:
+                                    supabase.table("inspiration_vault").update({"status": "used"}).eq("id", viral_map[sel_trend]['id']).execute()
+                                    st.cache_data.clear()
+
+                            # 2. Upload Thumbnail (If created)
+                            final_thumb_url = None
+                            if f"thumb_{vid['id']}" in st.session_state:
+                                try:
+                                    t_img = st.session_state[f"thumb_{vid['id']}"]
+                                    buf = io.BytesIO(); t_img.save(buf, format="JPEG")
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                                        tmp.write(buf.getvalue()); tmp_path = tmp.name
+                                    final_thumb_url = upload_to_social_system(tmp_path, f"thumb_{vid['id']}.jpg")
+                                    os.remove(tmp_path)
+                                except: pass
+
+                            # 3. Save to DB
+                            if final_caption:
+                                supabase.table("social_posts").insert({
+                                    "caption": final_caption, 
+                                    "image_url": vid['file_url'], 
+                                    "thumbnail_url": final_thumb_url, # Saves thumbnail!
+                                    "topic": topic_tag, 
+                                    "status": "draft"
+                                }).execute()
+                                st.success("Draft Created!")
                         
                     if st.button("🗑️", key=f"vdel_{vid['id']}", use_container_width=True): 
                         supabase.table("uploaded_images").delete().eq("id", vid['id']).execute(); st.rerun()
     else:
-        st.info("Vault empty. Render some Reels in the Dropbox Lab!")
+        st.info("Vault empty.")
 # --- TAB 5: ANALYTICS & STRATEGY ---
 with tab_analytics:
     c_head, c_btn = st.columns([3, 1])
@@ -1192,6 +1294,53 @@ with tab_analytics:
             
     else:
         st.info("⏳ Waiting for data... Once 'The Spy' scenario runs and grabs YouTube stats, this tab will light up.")
+        
+# --- TAB 6: VIRAL INSPIRATION (EDITORIAL GATE) ---
+with tab_inspo:
+    c_head, c_refresh = st.columns([3, 1])
+    with c_head:
+        st.subheader("🕵️ Editorial Gate")
+        st.caption("Review raw ideas. Approve the best ones for your library.")
+    with c_refresh:
+        if st.button("🔄 Refresh Feed"): st.cache_data.clear(); st.rerun()
+
+    # Fetch 'Fresh' Ideas
+    fresh_ideas = fetch_fresh_inspiration()
+
+    if fresh_ideas:
+        cols = st.columns(2)
+        for i, idea in enumerate(fresh_ideas):
+            with cols[i % 2]:
+                with st.container(border=True):
+                    st.markdown(f"**From:** {idea.get('source_channel', 'Unknown')}")
+                    
+                    # Editable Text Area (So you can tweak it BEFORE approving)
+                    edited_text = st.text_area("Draft Concept:", value=idea.get('ai_suggestion', ''), height=120, key=f"raw_{idea['id']}")
+                    
+                    with st.expander("Original Context"):
+                        st.caption(f"Original: {idea.get('original_caption', 'N/A')}")
+                        if idea.get('original_url'):
+                            st.markdown(f"[Watch Source]({idea['original_url']})")
+
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("✅ APPROVE", key=f"app_{idea['id']}", type="primary", use_container_width=True):
+                            # Set status to approved so it shows up in Tab 2/4
+                            supabase.table("inspiration_vault").update({
+                                "status": "approved",
+                                "ai_suggestion": edited_text
+                            }).eq("id", idea['id']).execute()
+                            st.toast("Approved! Sent to Library.")
+                            st.cache_data.clear(); st.rerun()
+                    
+                    with b2:
+                        if st.button("❌ REJECT", key=f"rej_{idea['id']}", use_container_width=True):
+                            supabase.table("inspiration_vault").update({"status": "rejected"}).eq("id", idea['id']).execute()
+                            st.toast("Rejected.")
+                            st.cache_data.clear(); st.rerun()
+    else:
+        st.success("🎉 Inbox Zero! No new viral trends to review.")
+
 # --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h2>", unsafe_allow_html=True)
@@ -1590,6 +1739,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
