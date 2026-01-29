@@ -123,10 +123,10 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (TEXT WRAPPING) ---
+# --- THUMBNAIL ENGINE (SAFE MARGINS) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
-    """Extracts a frame, wraps text to multiple lines, and draws it big."""
-    import textwrap # Import here for convenience
+    """Extracts a frame, wraps text with safe margins, and draws it."""
+    import textwrap
     
     try:
         # Clean Dropbox Link
@@ -147,8 +147,9 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
             
-            # 1. Setup Font (Target 10% of height)
-            fontsize = int(pil_img.height * 0.10) 
+            # 1. Setup Font based on WIDTH (Prevents overflow on vertical vids)
+            # Target size: 12% of the screen width
+            fontsize = int(pil_img.width * 0.12) 
             
             def load_font(size):
                 font_candidates = ["arial.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"]
@@ -159,20 +160,23 @@ def create_thumbnail(video_url, time_sec, overlay_text):
             
             font = load_font(fontsize)
             
-            # 2. Text Wrapping Logic
-            # Estimate how many characters fit per line (Width / Average char width)
-            # This is an approximation. 15-20 chars is usually good for vertical video.
-            avg_char_width = fontsize * 0.5
-            chars_per_line = int(pil_img.width / avg_char_width)
+            # 2. Text Wrapping Logic with Margins
+            # We want 10% margin total (5% left, 5% right)
+            safe_width = pil_img.width * 0.90
+            
+            # Estimate char width (0.6 is a safer multiplier for bold fonts)
+            avg_char_width = fontsize * 0.6
+            chars_per_line = int(safe_width / avg_char_width)
             
             # Wrap the text
             lines = textwrap.wrap(overlay_text, width=chars_per_line)
             
-            # 3. Calculate Total Block Height (to vertically center)
+            # 3. Calculate Block Height to Center Vertically
             # Get height of a single line
             sample_bbox = draw.textbbox((0, 0), "A", font=font)
             line_height = sample_bbox[3] - sample_bbox[1]
-            total_height = (line_height * len(lines)) + (10 * (len(lines) - 1)) # Add 10px gap between lines
+            # Total height = lines + gaps
+            total_height = (line_height * len(lines)) + (15 * (len(lines) - 1))
             
             # Start Y position
             start_y = (pil_img.height - total_height) / 2
@@ -183,10 +187,12 @@ def create_thumbnail(video_url, time_sec, overlay_text):
                 line_bbox = draw.textbbox((0, 0), line, font=font)
                 line_w = line_bbox[2] - line_bbox[0]
                 
+                # Center X
                 pos_x = (pil_img.width - line_w) / 2
-                pos_y = start_y + (i * (line_height + 10))
+                # Calc Y
+                pos_y = start_y + (i * (line_height + 15))
                 
-                # Draw Outline
+                # Draw Thick Outline
                 outline = max(2, int(fontsize / 15))
                 for adj_x in range(-outline, outline+1):
                     for adj_y in range(-outline, outline+1):
@@ -1790,6 +1796,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
