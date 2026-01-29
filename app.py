@@ -109,17 +109,35 @@ def get_dbx():
         app_secret=st.secrets["DROPBOX_APP_SECRET"],
         oauth2_refresh_token=st.secrets["DROPBOX_REFRESH_TOKEN"]
     )
-
 def upload_to_social_system(local_path, file_name):
-    """Moves any file to Dropbox and returns a direct stream link"""
+    """Moves file to Dropbox. If file exists, returns the EXISTING link instead of crashing."""
     try:
         dbx = get_dbx()
         db_path = f"/Social System/{file_name}"
+        
+        # 1. Upload the file (Overwrite mode ensures we update the image)
         with open(local_path, "rb") as f:
             dbx.files_upload(f.read(), db_path, mode=dropbox.files.WriteMode.overwrite)
-            # Create a shared link and convert it to a direct download link
+            
+        # 2. Try to get a shared link
+        try:
+            # First, try to create a new one
             shared_link = dbx.sharing_create_shared_link_with_settings(db_path)
-            return shared_link.url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "&raw=1")
+            url = shared_link.url
+        except dropbox.exceptions.ApiError as e:
+            # If Dropbox says "Link already exists", we ask for the existing one
+            if e.error.is_shared_link_already_exists():
+                links = dbx.sharing_list_shared_links(path=db_path, direct_only=True).links
+                if links:
+                    url = links[0].url
+                else:
+                    st.error("Error: Link exists but cannot be found."); return None
+            else:
+                st.error(f"Dropbox API Error: {e}"); return None
+
+        # 3. Convert to direct stream link (High Quality)
+        return url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "&raw=1")
+
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
@@ -1796,6 +1814,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
