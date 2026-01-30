@@ -365,7 +365,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         return None
         
 def scan_for_viral_shorts():
-    """Searches YouTube for viral paranormal shorts, remixes the concept using AI, and saves to Vault."""
+    """Searches YouTube for viral paranormal shorts, remixes the concept with EMOJIS + TAGS, and saves to Vault."""
     try:
         # 1. Auth with YouTube
         creds = Credentials(
@@ -399,18 +399,23 @@ def scan_for_viral_shorts():
             exists = supabase.table("inspiration_vault").select("id").eq("original_url", f"https://www.youtube.com/watch?v={vid_id}").execute()
             
             if not exists.data:
-                # 4. REMIX PROMPT (Creative Variation)
+                # 4. REMIX PROMPT (Now with Spooky Emojis & Tags)
                 prompt = f"""
                 I found a viral paranormal video titled: "{title}"
                 
                 Task: Create a SIMILAR but UNIQUE concept based on this hook.
-                Remix the location and the specific activity, but keep the same "scare factor".
+                Remix the location and activity, but keep the same "scare factor".
+                
+                Requirements:
+                1. Make it punchy and dramatic.
+                2. Use SPOOKY EMOJIS (👻, 💀, 🕯️, 😱, etc).
+                3. ALWAYS end with hashtags: #Shorts #Ghosts
                 
                 Example:
                 Input: "Chair moves in haunted cabin"
-                Output: "A heavy table slides across the floor in an abandoned shed."
+                Output: "A heavy table slides across the floor in an abandoned shed! 🏚️😱 Watch the shadows... 👻 #Shorts #Ghosts"
                 
-                Your Output (One sentence only):
+                Your Output:
                 """
                 
                 ai_resp = openai_client.chat.completions.create(
@@ -1866,6 +1871,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
