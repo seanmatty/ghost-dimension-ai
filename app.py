@@ -1460,11 +1460,12 @@ with tab_inspo:
     with c_act:
         # THE NEW HUNTER BUTTON
         if st.button("🦅 HUNT VIRAL SHORTS", type="primary"):
+            import time as tm  # <--- FIXED: Import locally with a nickname
             with st.spinner("Scanning YouTube for paranormal activity..."):
                 res = scan_for_viral_shorts()
                 if "✅" in res: st.success(res)
                 else: st.error(res)
-                time.sleep(1)
+                tm.sleep(1) # <--- Use the nickname here
                 st.rerun()
 
     st.divider()
@@ -1856,6 +1857,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
