@@ -363,6 +363,74 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
     except Exception as e:
         st.error(f"YouTube Upload Failed: {e}")
         return None
+        
+def scan_for_viral_shorts():
+    """Searches YouTube for viral paranormal shorts, rewrites them with AI, and saves to Vault."""
+    try:
+        # 1. Auth with YouTube (Reuse your existing creds)
+        creds = Credentials(
+            token=st.secrets["YOUTUBE_TOKEN"],
+            refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+            client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+            scopes=['https://www.googleapis.com/auth/youtube.readonly']
+        )
+        youtube = build('youtube', 'v3', credentials=creds)
+
+        # 2. Search for Viral Shorts (Last 30 days)
+        # We assume "viral" means high view count relative to age
+        search_response = youtube.search().list(
+            q="ghost caught on camera #shorts|paranormal activity #shorts",
+            part="snippet",
+            type="video",
+            order="viewCount",
+            publishedAfter=(datetime.now() - timedelta(days=30)).isoformat("T") + "Z",
+            maxResults=10
+        ).execute()
+
+        new_count = 0
+        
+        for item in search_response.get("items", []):
+            vid_id = item['id']['videoId']
+            title = item['snippet']['title']
+            channel = item['snippet']['channelTitle']
+            
+            # 3. Check if we already have this video (Deduplication)
+            exists = supabase.table("inspiration_vault").select("id").eq("original_url", f"https://www.youtube.com/watch?v={vid_id}").execute()
+            
+            if not exists.data:
+                # 4. Use AI to extract the concept
+                prompt = f"""
+                Analyze this viral YouTube title: "{title}"
+                Extract the visual concept and rewrite it as a short direction for a ghost hunter.
+                Rules:
+                1. Do NOT mention the original channel.
+                2. Keep it under 2 sentences.
+                3. Phrase it like: "Film a scene where..." or "Capture a moment of..."
+                """
+                
+                ai_resp = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                concept = ai_resp.choices[0].message.content.replace('"', '')
+
+                # 5. Save to Supabase
+                supabase.table("inspiration_vault").insert({
+                    "original_url": f"https://www.youtube.com/watch?v={vid_id}",
+                    "original_caption": title,
+                    "source_channel": channel,
+                    "ai_suggestion": concept,
+                    "status": "fresh"
+                }).execute()
+                
+                new_count += 1
+
+        return f"✅ Hunt Complete! Found {new_count} new viral concepts."
+
+    except Exception as e:
+        return f"❌ Hunter Failed: {e}"
 
 def update_youtube_stats():
     """
@@ -1385,34 +1453,44 @@ with tab_analytics:
         
 # --- TAB 6: VIRAL INSPIRATION (EDITORIAL GATE) ---
 with tab_inspo:
-    c_head, c_refresh = st.columns([3, 1])
+    c_head, c_act = st.columns([2, 1])
     with c_head:
-        st.subheader("🕵️ Editorial Gate")
-        st.caption("Review raw ideas. Approve the best ones for your library.")
-    with c_refresh:
-        if st.button("🔄 Refresh Feed"): st.cache_data.clear(); st.rerun()
+        st.subheader("🕵️ The Hunter")
+        st.caption("Review viral concepts found on YouTube.")
+    with c_act:
+        # THE NEW HUNTER BUTTON
+        if st.button("🦅 HUNT VIRAL SHORTS", type="primary"):
+            with st.spinner("Scanning YouTube for paranormal activity..."):
+                res = scan_for_viral_shorts()
+                if "✅" in res: st.success(res)
+                else: st.error(res)
+                time.sleep(1)
+                st.rerun()
+
+    st.divider()
 
     # Fetch 'Fresh' Ideas
     fresh_ideas = fetch_fresh_inspiration()
 
     if fresh_ideas:
+        st.write(f"**Found {len(fresh_ideas)} unreviewed concepts:**")
         cols = st.columns(2)
         for i, idea in enumerate(fresh_ideas):
-            with cols[i % 2]:
+            with cols[i % 2]: 
                 with st.container(border=True):
-                    st.markdown(f"**From:** {idea.get('source_channel', 'Unknown')}")
+                    st.markdown(f"**Channel:** {idea.get('source_channel', 'Unknown')}")
                     
                     # Editable Text Area (So you can tweak it BEFORE approving)
-                    edited_text = st.text_area("Draft Concept:", value=idea.get('ai_suggestion', ''), height=120, key=f"raw_{idea['id']}")
+                    edited_text = st.text_area("Draft Concept:", value=idea.get('ai_suggestion', ''), height=100, key=f"raw_{idea['id']}")
                     
-                    with st.expander("Original Context"):
-                        st.caption(f"Original: {idea.get('original_caption', 'N/A')}")
+                    with st.expander("Original Source"):
+                        st.caption(f"Title: {idea.get('original_caption', 'N/A')}")
                         if idea.get('original_url'):
-                            st.markdown(f"[Watch Source]({idea['original_url']})")
+                            st.markdown(f"[Watch Video]({idea['original_url']})")
 
                     b1, b2 = st.columns(2)
                     with b1:
-                        if st.button("✅ APPROVE", key=f"app_{idea['id']}", type="primary", use_container_width=True):
+                        if st.button("✅ KEEP", key=f"app_{idea['id']}", type="primary", use_container_width=True):
                             # Set status to approved so it shows up in Tab 2/4
                             supabase.table("inspiration_vault").update({
                                 "status": "approved",
@@ -1422,13 +1500,13 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
                     
                     with b2:
-                        if st.button("❌ REJECT", key=f"rej_{idea['id']}", use_container_width=True):
+                        if st.button("❌ TRASH", key=f"rej_{idea['id']}", use_container_width=True):
                             supabase.table("inspiration_vault").update({"status": "rejected"}).eq("id", idea['id']).execute()
                             st.toast("Rejected.")
                             st.cache_data.clear(); st.rerun()
     else:
-        st.success("🎉 Inbox Zero! No new viral trends to review.")
-
+        st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
+        
 # --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h2>", unsafe_allow_html=True)
@@ -1778,6 +1856,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
