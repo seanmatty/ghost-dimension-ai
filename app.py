@@ -365,9 +365,9 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         return None
         
 def scan_for_viral_shorts():
-    """Searches YouTube for viral paranormal shorts, rewrites them with AI, and saves to Vault."""
+    """Searches YouTube for viral paranormal shorts, remixes the concept using AI, and saves to Vault."""
     try:
-        # 1. Auth with YouTube (Reuse your existing creds)
+        # 1. Auth with YouTube
         creds = Credentials(
             token=st.secrets["YOUTUBE_TOKEN"],
             refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
@@ -379,7 +379,6 @@ def scan_for_viral_shorts():
         youtube = build('youtube', 'v3', credentials=creds)
 
         # 2. Search for Viral Shorts (Last 30 days)
-        # We assume "viral" means high view count relative to age
         search_response = youtube.search().list(
             q="ghost caught on camera #shorts|paranormal activity #shorts",
             part="snippet",
@@ -396,18 +395,22 @@ def scan_for_viral_shorts():
             title = item['snippet']['title']
             channel = item['snippet']['channelTitle']
             
-            # 3. Check if we already have this video (Deduplication)
+            # 3. Deduplication Check
             exists = supabase.table("inspiration_vault").select("id").eq("original_url", f"https://www.youtube.com/watch?v={vid_id}").execute()
             
             if not exists.data:
-                # 4. Use AI to extract the concept
+                # 4. REMIX PROMPT (Creative Variation)
                 prompt = f"""
-                Analyze this viral YouTube title: "{title}"
-                Extract the visual concept and rewrite it as a short direction for a ghost hunter.
-                Rules:
-                1. Do NOT mention the original channel.
-                2. Keep it under 2 sentences.
-                3. Phrase it like: "Film a scene where..." or "Capture a moment of..."
+                I found a viral paranormal video titled: "{title}"
+                
+                Task: Create a SIMILAR but UNIQUE concept based on this hook.
+                Remix the location and the specific activity, but keep the same "scare factor".
+                
+                Example:
+                Input: "Chair moves in haunted cabin"
+                Output: "A heavy table slides across the floor in an abandoned shed."
+                
+                Your Output (One sentence only):
                 """
                 
                 ai_resp = openai_client.chat.completions.create(
@@ -1863,6 +1866,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
