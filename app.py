@@ -1460,12 +1460,19 @@ with tab_inspo:
     with c_act:
         # THE NEW HUNTER BUTTON
         if st.button("🦅 HUNT VIRAL SHORTS", type="primary"):
-            import time as tm  # <--- FIXED: Import locally with a nickname
+            import time as tm 
             with st.spinner("Scanning YouTube for paranormal activity..."):
                 res = scan_for_viral_shorts()
+                
+                # 1. Show Result
                 if "✅" in res: st.success(res)
                 else: st.error(res)
-                tm.sleep(1) # <--- Use the nickname here
+                
+                # 2. CRITICAL FIX: Clear cache so new items appear!
+                st.cache_data.clear()
+                
+                # 3. Reload
+                tm.sleep(2) 
                 st.rerun()
 
     st.divider()
@@ -1481,7 +1488,7 @@ with tab_inspo:
                 with st.container(border=True):
                     st.markdown(f"**Channel:** {idea.get('source_channel', 'Unknown')}")
                     
-                    # Editable Text Area (So you can tweak it BEFORE approving)
+                    # Editable Text Area
                     edited_text = st.text_area("Draft Concept:", value=idea.get('ai_suggestion', ''), height=100, key=f"raw_{idea['id']}")
                     
                     with st.expander("Original Source"):
@@ -1492,7 +1499,6 @@ with tab_inspo:
                     b1, b2 = st.columns(2)
                     with b1:
                         if st.button("✅ KEEP", key=f"app_{idea['id']}", type="primary", use_container_width=True):
-                            # Set status to approved so it shows up in Tab 2/4
                             supabase.table("inspiration_vault").update({
                                 "status": "approved",
                                 "ai_suggestion": edited_text
@@ -1857,6 +1863,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
