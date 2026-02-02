@@ -312,7 +312,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         # 2. Configure Logic
         if scheduled_time:
             publish_at = scheduled_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            privacy = "private"
+            privacy = "private" # YouTube API requires 'private' if 'publishAt' is set
         else:
             publish_at = None
             privacy = "public"
@@ -322,14 +322,18 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
             'snippet': {
                 'title': title,
                 'description': description,
-                'tags': ['Ghost Dimension', 'Paranormal'],
-                'categoryId': '22'
+                'tags': ['Ghost Dimension', 'Paranormal', 'Ghost Hunting', 'Scary', 'Evidence'],
+                'categoryId': '24' # 24 = Entertainment (Better for Ads than 22)
             },
             'status': {
                 'privacyStatus': privacy,
-                'selfDeclaredMadeForKids': False
+                'selfDeclaredMadeForKids': False, # REQUIRED for Monetization
+                'embeddable': True,
+                'publicStatsViewable': True
             }
         }
+        
+        # Schedule Logic
         if publish_at:
             body['status']['publishAt'] = publish_at
 
@@ -338,7 +342,8 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         request = youtube.videos().insert(
             part=','.join(body.keys()),
             body=body,
-            media_body=media
+            media_body=media,
+            notifySubscribers=True # Ensure subs get the bell notification
         )
         
         response = None
@@ -2025,6 +2030,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
