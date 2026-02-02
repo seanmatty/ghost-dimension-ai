@@ -533,20 +533,13 @@ def get_caption_prompt(style, topic, context):
     }
     return f"Role: Ghost Dimension Official Social Media Lead. Brand Context: {context}. Topic: {topic}. Strategy: {strategies.get(style, strategies['🔥 Viral / Debate (Ask Questions)'])}. IMPORTANT: Output ONLY the final caption text. Do not include 'Post Copy:' or markdown headers."
 
-# --- VIDEO PROCESSING ENGINE (DUAL FORMAT SUPPORT) ---
-def process_reel(video_url, start_time_sec, duration, effect, output_filename, crop=True):
-    """Renders video. If crop=False, keeps original aspect ratio."""
+# --- VIDEO PROCESSING ENGINE (V74 SAFE RENDER) ---
+def process_reel(video_url, start_time_sec, duration, effect, output_filename):
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
 
-    # FILTER LOGIC
-    if crop:
-        # Vertical 9:16 (Shorts)
-        base = "crop=ih*(9/16):ih:iw/2-ow/2:0,scale=1080:1920"
-    else:
-        # Full Landscape (Keep Aspect Ratio, Normalize Height to 1080p)
-        # scale=-2:1080 ensures width is divisible by 2 (ffmpeg requirement)
-        base = "scale=-2:1080"
+    # BASE: Crop to 9:16 (Vertical) -> Scale to 1080x1920
+    base = "crop=ih*(9/16):ih:iw/2-ow/2:0,scale=1080:1920"
     
     # EFFECT LIBRARY
     fx_map = {
@@ -584,7 +577,7 @@ def process_reel(video_url, start_time_sec, duration, effect, output_filename, c
         "-c:v", "libx264", 
         "-preset", "ultrafast", 
         "-crf", "28",
-        "-pix_fmt", "yuv420p",
+        "-pix_fmt", "yuv420p", # FORCE COMPATIBILITY
         "-c:a", "aac",
         output_filename
     ]
@@ -593,7 +586,8 @@ def process_reel(video_url, start_time_sec, duration, effect, output_filename, c
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return True
     except subprocess.CalledProcessError as e:
-        st.error(f"Render Failed: {e}")
+        err_msg = e.stderr.decode() if e.stderr else str(e)
+        st.error(f"Render Failed. FFmpeg Error: {err_msg}")
         return False
         
 
@@ -1123,46 +1117,13 @@ with tab_dropbox:
                 c_vid, c_act = st.columns([1, 1])
                 with c_vid: 
                     st.video(st.session_state.preview_reel_path)
-                
                 with c_act:
-                    # New Checkbox for Uncropped
-                    save_full = st.checkbox("➕ Also Save Uncropped (Landscape)?", value=True)
-                    
                     if st.button("✅ APPROVE & VAULT", type="primary"):
-                        # 1. Save the Short (Cropped)
-                        fn_short = f"reel_short_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                        url_short = upload_to_social_system(st.session_state.preview_reel_path, fn_short)
-                        
-                        if url_short:
-                            supabase.table("uploaded_images").insert({
-                                "file_url": url_short, "filename": fn_short, "media_type": "video"
-                            }).execute()
-                            st.toast("✅ Short Vaulted!")
-
-                        # 2. Save the Full (Uncropped) - Uses saved params from preview
-                        if save_full and "last_render_params" in st.session_state:
-                            p = st.session_state.last_render_params
-                            with st.spinner("Rendering Uncropped Variant..."):
-                                fn_full = f"reel_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                                temp_full = "temp_full_render.mp4"
-                                
-                                # Render with crop=False
-                                success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
-                                
-                                if success:
-                                    url_full = upload_to_social_system(temp_full, fn_full)
-                                    if url_full:
-                                        supabase.table("uploaded_images").insert({
-                                            "file_url": url_full, "filename": fn_full, "media_type": "video"
-                                        }).execute()
-                                        st.toast("✅ Full Clip Vaulted!")
-                                    os.remove(temp_full)
-
-                        # Cleanup
-                        os.remove(st.session_state.preview_reel_path)
-                        del st.session_state.preview_reel_path
-                        st.success("🎉 Assets secured.")
-                        import time; time.sleep(1); st.rerun()
+                        fn = f"reel_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                        url = upload_to_social_system(st.session_state.preview_reel_path, fn)
+                        if url:
+                            supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
+                            st.success("Vaulted to Dropbox!"); os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
                     
                     if st.button("❌ DISCARD PREVIEW"):
                         os.remove(st.session_state.preview_reel_path)
@@ -1185,13 +1146,10 @@ with tab_dropbox:
                     if st.button(f"▶️ PREVIEW", key=f"prev_{i}"):
                         temp_name = "temp_preview_reel.mp4"
                         with st.spinner("Rendering..."):
-                            # Save params so we can re-use them for uncropped version later
-                            st.session_state.last_render_params = {
-                                'url': db_url, 'ts': ts, 'dur': clip_dur, 'fx': effect_choice
-                            }
-                            if process_reel(db_url, ts, clip_dur, effect_choice, temp_name, crop=True): 
+                            if process_reel(db_url, ts, clip_dur, effect_choice, temp_name): 
                                 st.session_state.preview_reel_path = temp_name
                                 st.rerun()
+
 # B. PRECISION CUTTER
     elif tool_mode.startswith("⏱️"):
         st.info("Step 1: Watch video to find the time. Step 2: Enter Min/Sec below.")
@@ -1597,9 +1555,6 @@ with d1:
             with col2:
                 cap = st.text_area("Caption", p['caption'], height=150, key=f"cp_{p['id']}_{idx}")
                 
-                # OPTION: Toggle AI Title vs Exact Caption
-                use_ai_title = st.checkbox("⚡ AI Viral Title", value=True, key=f"ai_t_{p['id']}", help="Uncheck to use your caption exactly (Good for Standard Videos)")
-
                 # Smart Clock
                 din = st.date_input("Date", key=f"dt_{p['id']}_{idx}")
                 best_time = get_best_time_for_day(din)
@@ -1608,6 +1563,7 @@ with d1:
                 b_col1, b_col2, b_col3 = st.columns(3)
                 
                 # --- SHARED POSTING LOGIC ---
+                # This function prevents duplicate code for Schedule vs Post Now
                 def execute_post(is_scheduled):
                     target_dt = datetime.combine(din, tin) if is_scheduled else None
                     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -1616,14 +1572,9 @@ with d1:
                     
                     # --- PATH A: VIDEO (YOUTUBE DIRECT) ---
                     if is_video:
-                        # 1. Determine Title Logic
-                        if use_ai_title:
-                            with st.spinner("🧠 AI generating title..."):
-                                yt_title = generate_viral_title(cap)
-                        else:
-                            # Use exact caption (Truncated to 100 chars for safety)
-                            yt_title = cap[:100]
-                            st.toast("Using exact caption as title.")
+                        # 1. Generate Title
+                        with st.spinner("🧠 AI generating title..."):
+                            yt_title = generate_viral_title(cap)
                         
                         # 2. Download Media Assets (Video + Thumb)
                         with st.spinner("⬇️ Downloading Assets..."):
@@ -1633,7 +1584,7 @@ with d1:
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
                                 tmp_vid.write(r.content); local_path = tmp_vid.name
                             
-                            # Thumbnail
+                            # Thumbnail (NEW LOGIC)
                             local_thumb_path = None
                             if p.get('thumbnail_url'):
                                 t_link = p['thumbnail_url'].replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
@@ -1643,10 +1594,11 @@ with d1:
 
                         # 3. Upload to YouTube
                         with st.spinner("🚀 Uploading to YouTube..."):
+                            # We pass the thumbnail path here!
                             yt_link = upload_to_youtube_direct(
                                 local_path, 
                                 yt_title, 
-                                cap, # Full caption goes to Description
+                                cap, 
                                 target_dt, 
                                 thumbnail_path=local_thumb_path 
                             )
@@ -1660,6 +1612,7 @@ with d1:
                                 st.success(f"✅ YouTube Done! ID: {yt_id}")
                     
                     # --- DB UPDATE & MAKE TRIGGER ---
+                    # Update Supabase
                     supabase.table("social_posts").update({
                         "status": "scheduled",
                         "caption": cap,
@@ -1673,6 +1626,7 @@ with d1:
                     }).eq("file_url", p['image_url']).execute()
                     
                     # Trigger Make (For FB/Insta)
+                    # Make will pull the 'thumbnail_url' from Supabase automatically if mapped correctly
                     st.toast("🤖 Triggering Make for Meta...")
                     try:
                         url = f"https://eu1.make.com/api/v2/scenarios/{st.secrets['MAKE_SCENARIO_ID']}/run"
@@ -1683,14 +1637,17 @@ with d1:
                     st.success("✨ Process Complete!"); st.rerun()
 
                 # --- BUTTONS ---
+                # 📅 SCHEDULE BUTTON
                 with b_col1:
                     if st.button("📅 Schedule", key=f"s_{p['id']}_{idx}"):
                         execute_post(is_scheduled=True)
 
+                # 🚀 POST NOW BUTTON
                 with b_col2:
                     if st.button("🚀 POST NOW", key=f"p_{p['id']}_{idx}", type="primary"):
                         execute_post(is_scheduled=False)
 
+                # 🗑️ DISCARD
                 with b_col3:
                     if st.button("🗑️ Discard", key=f"del_{p['id']}_{idx}"):
                         supabase.table("social_posts").delete().eq("id", p['id']).execute(); st.rerun()
