@@ -1069,36 +1069,27 @@ with tab_dropbox:
                     if st.button("💾 SAVE TO IMG VAULT", type="primary"):
                         try:
                             with st.spinner("Saving to Dropbox..."):
-                                # 1. Process Image
                                 buf = io.BytesIO()
                                 cropped.convert("RGB").resize((1080, 1080)).save(buf, format="JPEG", quality=90)
                                 fname = f"crop_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                                 
-                                # 2. Save to Temp File
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
                                     tmp.write(buf.getvalue()); tmp_path = tmp.name
                                 
-                                # 3. UPLOAD TO DROPBOX (Not Supabase!)
                                 url = upload_to_social_system(tmp_path, fname)
                                 os.remove(tmp_path)
 
-                                # 4. Record in Database
                                 if url:
                                     supabase.table("uploaded_images").insert({
-                                        "file_url": url, 
-                                        "filename": fname, 
-                                        "media_type": "image"
+                                        "file_url": url, "filename": fname, "media_type": "image"
                                     }).execute()
                                     st.success("✅ Saved to Dropbox!")
                                     st.session_state.frame_to_crop = None; st.rerun()
-                                else:
-                                    st.error("Dropbox Upload Failed")
-                        except Exception as e:
-                            st.error(f"Save Error: {e}")
+                                else: st.error("Dropbox Upload Failed")
+                        except Exception as e: st.error(f"Save Error: {e}")
                     if st.button("❌ CANCEL CROP"): st.session_state.frame_to_crop = None; st.rerun()
             else:
                 st.divider()
-                # HEADER WITH CLEAR BUTTON
                 c_head, c_clear = st.columns([3, 1])
                 with c_head: st.write("📸 **Select a frame to crop:**")
                 with c_clear:
@@ -1111,7 +1102,7 @@ with tab_dropbox:
                         st.image(frame, use_container_width=True)
                         if st.button("✂️ CROP", key=f"cr_{i}"): st.session_state.frame_to_crop = frame; st.rerun()
 
-       # Reel Mode
+        # Reel Mode
         elif mode.startswith("🎬") and st.session_state.db_frames:
             st.divider()
             EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
@@ -1123,7 +1114,8 @@ with tab_dropbox:
             # --- MONITOR SECTION ---
             if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
                 st.markdown("### 🎬 MONITOR")
-                c_vid, c_act = st.columns([1, 1])
+                # LAYOUT UPDATE: Video takes 1/3, Controls take 2/3 (Makes video smaller)
+                c_vid, c_act = st.columns([1, 2])
                 with c_vid: 
                     st.video(st.session_state.preview_reel_path)
                 
@@ -1131,10 +1123,8 @@ with tab_dropbox:
                     save_full = st.checkbox("➕ Also Save Uncropped (Landscape)?", value=True)
                     
                     if st.button("✅ APPROVE & VAULT", type="primary"):
-                        # Use a status container to debug the process
                         with st.status("🚀 Processing Assets...", expanded=True) as status:
-                            
-                            # 1. SAVE SHORT
+                            # 1. Save Short
                             status.write("📱 Processing Short...")
                             fn_short = f"reel_short_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
                             url_short = upload_to_social_system(st.session_state.preview_reel_path, fn_short)
@@ -1144,53 +1134,148 @@ with tab_dropbox:
                                     "file_url": url_short, "filename": fn_short, "media_type": "video"
                                 }).execute()
                                 status.write("✅ Short Vaulted!")
-                            else:
-                                status.error("❌ Failed to upload Short to Dropbox.")
 
-                            # 2. SAVE FULL (Conditional)
-                            if save_full:
-                                if "last_render_params" in st.session_state:
-                                    status.write("🎞️ Rendering Landscape Version...")
-                                    p = st.session_state.last_render_params
-                                    fn_full = f"reel_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                                    temp_full = "temp_full_render.mp4"
-                                    
-                                    # RENDER
-                                    success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
-                                    
-                                    if success:
-                                        status.write("☁️ Uploading Landscape to Dropbox...")
-                                        url_full = upload_to_social_system(temp_full, fn_full)
-                                        if url_full:
-                                            supabase.table("uploaded_images").insert({
-                                                "file_url": url_full, "filename": fn_full, "media_type": "video"
-                                            }).execute()
-                                            status.write("✅ Full Clip Vaulted!")
-                                        else:
-                                            status.error("❌ Dropbox Upload Failed for Full Clip.")
-                                        
-                                        if os.path.exists(temp_full): os.remove(temp_full)
-                                    else:
-                                        status.error("❌ FFmpeg failed to render Landscape version.")
-                                else:
-                                    status.warning("⚠️ Cannot render Full: Preview params lost. Click Preview again.")
+                            # 2. Save Full
+                            if save_full and "last_render_params" in st.session_state:
+                                status.write("🎞️ Rendering Landscape Version...")
+                                p = st.session_state.last_render_params
+                                fn_full = f"reel_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                                temp_full = "temp_full_render.mp4"
+                                success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
+                                if success:
+                                    status.write("☁️ Uploading Landscape...")
+                                    url_full = upload_to_social_system(temp_full, fn_full)
+                                    if url_full:
+                                        supabase.table("uploaded_images").insert({
+                                            "file_url": url_full, "filename": fn_full, "media_type": "video"
+                                        }).execute()
+                                        status.write("✅ Full Clip Vaulted!")
+                                    os.remove(temp_full)
 
-                            # CLEANUP
-                            status.write("🧹 Cleaning up...")
+                            # Cleanup
                             if os.path.exists(st.session_state.preview_reel_path):
                                 os.remove(st.session_state.preview_reel_path)
                             del st.session_state.preview_reel_path
-                            
                             status.update(label="🎉 Process Complete!", state="complete", expanded=False)
                             import time; time.sleep(1); st.rerun()
                     
                     if st.button("❌ DISCARD PREVIEW"):
+                        os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
+            st.divider()
+
+            # --- GRID SECTION ---
+            c_head, c_clear = st.columns([3, 1])
+            with c_head: st.write("🎬 **Click '▶️ PREVIEW' to render a test clip:**")
+            with c_clear:
+                if st.button("🗑️ DISCARD SCAN", key="clr_rl"):
+                    st.session_state.db_frames = []; st.rerun()
+
+            cols = st.columns(5)
+            for i, frame in enumerate(st.session_state.db_frames):
+                with cols[i % 5]:
+                    st.image(frame, use_container_width=True)
+                    ts = st.session_state.db_timestamps[i]
+                    if st.button(f"▶️ PREVIEW", key=f"prev_{i}"):
+                        temp_name = "temp_preview_reel.mp4"
+                        with st.spinner("Rendering..."):
+                            st.session_state.last_render_params = {'url': db_url, 'ts': ts, 'dur': clip_dur, 'fx': effect_choice}
+                            if process_reel(db_url, ts, clip_dur, effect_choice, temp_name, crop=True): 
+                                st.session_state.preview_reel_path = temp_name
+                                st.rerun()
+
+    # B. PRECISION CUTTER (UPDATED)
+    elif tool_mode.startswith("⏱️"):
+        st.info("Step 1: Watch video to find the time. Step 2: Enter Min/Sec below.")
+        
+        if "vid_duration" not in st.session_state: st.session_state.vid_duration = 0
+        if "display_url" not in st.session_state: st.session_state.display_url = ""
+
+        if st.button("📡 LOAD VIDEO INFO"):
+            if db_url:
+                st.session_state.vid_duration = get_video_duration(db_url)
+                st.session_state.display_url = db_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
+                st.rerun()
+        
+        if st.session_state.display_url:
+            st.video(st.session_state.display_url)
+            
+            st.divider()
+            st.subheader("✂️ Cut Settings")
+            
+            c_s1, c_s2 = st.columns(2)
+            with c_s1: s_min = st.number_input("Start Minute", min_value=0, value=0, step=1, key="s_min")
+            with c_s2: s_sec = st.number_input("Start Second", min_value=0, max_value=59, value=0, step=1, key="s_sec")
+            
+            c_e1, c_e2 = st.columns(2)
+            with c_e1: e_min = st.number_input("End Minute", min_value=0, value=0, step=1, key="e_min")
+            with c_e2: e_sec = st.number_input("End Second", min_value=0, max_value=59, value=0, step=1, key="e_sec")
+
+            start_ts = (s_min * 60) + s_sec
+            end_ts = (e_min * 60) + e_sec
+            duration = end_ts - start_ts
+
+            if duration <= 0:
+                st.error("⚠️ End time must be AFTER Start time.")
+            else:
+                st.info(f"⏱️ Clip Length: **{duration} seconds**")
+
+                EFFECTS_LIST = ["None", "🟢 CCTV (Green)", "🔵 Ectoplasm (Blue NV)", "🔴 Demon Mode", "⚫ Noir (B&W)", "🏚️ Old VHS", "⚡ Poltergeist (Static)", "📜 Sepia (1920s)", "📸 Negative (Invert)", "🪞 Mirror World", "🖍️ Edge Detect", "🔥 Deep Fried", "👻 Ghostly Blur", "🔦 Spotlight", "🔮 Purple Haze", "🧊 Frozen", "🩸 Blood Bath", "🌚 Midnight", "📻 Radio Tower", "👽 Alien"]
+                man_effect = st.selectbox("Select Visual Effect", EFFECTS_LIST, key="man_fx")
+
+                if st.button("🎬 RENDER PRECISION CLIP", type="primary"):
+                    temp_name = "temp_precision_reel.mp4"
+                    with st.spinner(f"Cutting from {s_min}:{s_sec:02d} to {e_min}:{e_sec:02d}..."):
+                        # SAVE PARAMS for the Dual Save Logic
+                        st.session_state.man_render_params = {'url': db_url, 'ts': start_ts, 'dur': duration, 'fx': man_effect}
+                        
+                        if process_reel(db_url, start_ts, duration, man_effect, temp_name, crop=True): 
+                            st.session_state.preview_reel_path = temp_name; st.rerun()
+
+        # --- UPDATED APPROVAL LOGIC (PRECISION CUTTER) ---
+        if "preview_reel_path" in st.session_state and os.path.exists(st.session_state.preview_reel_path):
+            st.markdown("### 🎬 MONITOR")
+            # LAYOUT UPDATE: Video takes 1/3, Controls take 2/3
+            c_vid, c_act = st.columns([1, 2])
+            with c_vid: st.video(st.session_state.preview_reel_path)
+            with c_act:
+                save_full_man = st.checkbox("➕ Also Save Uncropped (Landscape)?", value=True, key="chk_man")
+                
+                if st.button("✅ APPROVE & VAULT", key="man_save", type="primary"):
+                    with st.status("🚀 Processing Precision Clip...", expanded=True) as status:
+                        # 1. Save Short
+                        status.write("📱 Processing Short...")
+                        fn = f"reel_prec_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                        url = upload_to_social_system(st.session_state.preview_reel_path, fn)
+                        
+                        if url:
+                            supabase.table("uploaded_images").insert({"file_url": url, "filename": fn, "media_type": "video"}).execute()
+                            status.write("✅ Short Vaulted!")
+
+                        # 2. Save Full (Uses st.session_state.man_render_params)
+                        if save_full_man and "man_render_params" in st.session_state:
+                            status.write("🎞️ Rendering Landscape Version...")
+                            p = st.session_state.man_render_params
+                            fn_full = f"reel_prec_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                            temp_full = "temp_prec_full.mp4"
+                            
+                            success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
+                            if success:
+                                status.write("☁️ Uploading Landscape...")
+                                url_full = upload_to_social_system(temp_full, fn_full)
+                                if url_full:
+                                    supabase.table("uploaded_images").insert({"file_url": url_full, "filename": fn_full, "media_type": "video"}).execute()
+                                    status.write("✅ Full Clip Vaulted!")
+                                os.remove(temp_full)
+                        
+                        # Cleanup
                         if os.path.exists(st.session_state.preview_reel_path):
                             os.remove(st.session_state.preview_reel_path)
                         del st.session_state.preview_reel_path
-                        st.rerun()
-                st.divider()
-
+                        status.update(label="🎉 Done!", state="complete", expanded=False)
+                        import time; time.sleep(1); st.rerun()
+                
+                if st.button("❌ DISCARD PREVIEW", key="man_del"):
+                    os.remove(st.session_state.preview_reel_path); del st.session_state.preview_reel_path; st.rerun()
             # --- GRID SECTION ---
             c_head, c_clear = st.columns([3, 1])
             with c_head: st.write("🎬 **Click '▶️ PREVIEW' to render a test clip:**")
@@ -1940,6 +2025,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
