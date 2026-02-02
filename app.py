@@ -263,21 +263,35 @@ def get_brand_knowledge():
     
 def generate_viral_title(caption):
     """Generates a high-CTR YouTube Shorts title under 100 chars."""
+    # Fallback default
+    fallback = "GHOST DIMENSION EVIDENCE caught on camera"
+    
+    if not caption or len(caption) < 5:
+        return fallback
+
     try:
-        # SAFE VERSION: No triple quotes to prevent syntax errors
         prompt = "You are a master YouTube strategist. Create a viral, high-CTR title for the horror niche.\n"
         prompt += "Rules:\n1. NO brand names.\n2. Use psychological triggers.\n3. Use ALL CAPS for key scary words.\n"
         prompt += "4. Must be under 100 characters.\n5. No hashtags.\n6. Do not use quotes.\n"
         prompt += f"Transform this caption into a title: '{caption}'"
 
+        # Switched to gpt-4o-mini for speed and reliability
         resp = openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
         title = resp.choices[0].message.content.strip().replace('"', '')
-        return title[:100] 
-    except:
-        return "GHOST DIMENSION EVIDENCE caught on camera"
+        
+        # Double check length
+        if len(title) > 100:
+            return title[:100]
+            
+        return title
+        
+    except Exception as e:
+        # This will print the actual error to your screen so you know what's wrong
+        st.error(f"⚠️ AI Title Failed: {e}") 
+        return fallback
         
 def save_ai_image_to_storage(image_bytes):
     try:
@@ -2030,6 +2044,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
