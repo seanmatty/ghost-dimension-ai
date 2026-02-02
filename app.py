@@ -535,20 +535,19 @@ def get_caption_prompt(style, topic, context):
 
 # --- VIDEO PROCESSING ENGINE (DUAL FORMAT SUPPORT) ---
 def process_reel(video_url, start_time_sec, duration, effect, output_filename, crop=True):
-    """Renders video. If crop=False, keeps original aspect ratio."""
+    """Renders video. If crop=False, it fits video into 1920x1080 with black bars (No Crop)."""
     if "dropbox.com" in video_url:
         video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
 
     # FILTER LOGIC
     if crop:
-        # Vertical 9:16 (Shorts)
+        # Vertical 9:16 (Zoom to fill)
         base = "crop=ih*(9/16):ih:iw/2-ow/2:0,scale=1080:1920"
     else:
-        # Full Landscape (Keep Aspect Ratio, Normalize Height to 1080p)
-        # scale=-2:1080 ensures width is divisible by 2 (ffmpeg requirement)
-        base = "scale=-2:1080"
+        # Landscape 16:9 (Fit inside 1920x1080 with black bars - safer than raw scaling)
+        base = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
     
-    # EFFECT LIBRARY (Keeps your existing effects)
+    # EFFECT LIBRARY
     fx_map = {
         "None": "",
         "🟢 CCTV (Green)": ",curves=all='0/0 0.5/0.5 1/1':g='0/0 0.5/0.8 1/1',noise=alls=20:allf=t+u",
@@ -590,10 +589,14 @@ def process_reel(video_url, start_time_sec, duration, effect, output_filename, c
     ]
     
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # Increased timeout to 120s to prevent Streamlit killing it
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120)
         return True
     except subprocess.CalledProcessError as e:
         st.error(f"Render Failed: {e}")
+        return False
+    except subprocess.TimeoutExpired:
+        st.error("Render timed out. Try a shorter clip.")
         return False
         
 
@@ -1125,48 +1128,65 @@ with tab_dropbox:
                     st.video(st.session_state.preview_reel_path)
                 
                 with c_act:
-                    # ✅ THIS CHECKBOX LETS YOU SAVE BOTH
                     save_full = st.checkbox("➕ Also Save Uncropped (Landscape)?", value=True)
                     
                     if st.button("✅ APPROVE & VAULT", type="primary"):
-                        # 1. Save the Short (Cropped)
-                        fn_short = f"reel_short_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                        url_short = upload_to_social_system(st.session_state.preview_reel_path, fn_short)
-                        
-                        if url_short:
-                            supabase.table("uploaded_images").insert({
-                                "file_url": url_short, "filename": fn_short, "media_type": "video"
-                            }).execute()
-                            st.toast("✅ Short Vaulted!")
+                        # Use a status container to debug the process
+                        with st.status("🚀 Processing Assets...", expanded=True) as status:
+                            
+                            # 1. SAVE SHORT
+                            status.write("📱 Processing Short...")
+                            fn_short = f"reel_short_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                            url_short = upload_to_social_system(st.session_state.preview_reel_path, fn_short)
+                            
+                            if url_short:
+                                supabase.table("uploaded_images").insert({
+                                    "file_url": url_short, "filename": fn_short, "media_type": "video"
+                                }).execute()
+                                status.write("✅ Short Vaulted!")
+                            else:
+                                status.error("❌ Failed to upload Short to Dropbox.")
 
-                        # 2. Save the Full (Uncropped) - Uses saved params
-                        if save_full and "last_render_params" in st.session_state:
-                            p = st.session_state.last_render_params
-                            with st.spinner("Rendering Uncropped Variant..."):
-                                # Naming it "reel_full_" makes it easy to detect later!
-                                fn_full = f"reel_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-                                temp_full = "temp_full_render.mp4"
-                                
-                                # Render with crop=False
-                                success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
-                                
-                                if success:
-                                    url_full = upload_to_social_system(temp_full, fn_full)
-                                    if url_full:
-                                        supabase.table("uploaded_images").insert({
-                                            "file_url": url_full, "filename": fn_full, "media_type": "video"
-                                        }).execute()
-                                        st.toast("✅ Full Clip Vaulted!")
-                                    os.remove(temp_full)
+                            # 2. SAVE FULL (Conditional)
+                            if save_full:
+                                if "last_render_params" in st.session_state:
+                                    status.write("🎞️ Rendering Landscape Version...")
+                                    p = st.session_state.last_render_params
+                                    fn_full = f"reel_full_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+                                    temp_full = "temp_full_render.mp4"
+                                    
+                                    # RENDER
+                                    success = process_reel(p['url'], p['ts'], p['dur'], p['fx'], temp_full, crop=False)
+                                    
+                                    if success:
+                                        status.write("☁️ Uploading Landscape to Dropbox...")
+                                        url_full = upload_to_social_system(temp_full, fn_full)
+                                        if url_full:
+                                            supabase.table("uploaded_images").insert({
+                                                "file_url": url_full, "filename": fn_full, "media_type": "video"
+                                            }).execute()
+                                            status.write("✅ Full Clip Vaulted!")
+                                        else:
+                                            status.error("❌ Dropbox Upload Failed for Full Clip.")
+                                        
+                                        if os.path.exists(temp_full): os.remove(temp_full)
+                                    else:
+                                        status.error("❌ FFmpeg failed to render Landscape version.")
+                                else:
+                                    status.warning("⚠️ Cannot render Full: Preview params lost. Click Preview again.")
 
-                        # Cleanup
-                        os.remove(st.session_state.preview_reel_path)
-                        del st.session_state.preview_reel_path
-                        st.success("🎉 Assets secured.")
-                        import time; time.sleep(1); st.rerun()
+                            # CLEANUP
+                            status.write("🧹 Cleaning up...")
+                            if os.path.exists(st.session_state.preview_reel_path):
+                                os.remove(st.session_state.preview_reel_path)
+                            del st.session_state.preview_reel_path
+                            
+                            status.update(label="🎉 Process Complete!", state="complete", expanded=False)
+                            import time; time.sleep(1); st.rerun()
                     
                     if st.button("❌ DISCARD PREVIEW"):
-                        os.remove(st.session_state.preview_reel_path)
+                        if os.path.exists(st.session_state.preview_reel_path):
+                            os.remove(st.session_state.preview_reel_path)
                         del st.session_state.preview_reel_path
                         st.rerun()
                 st.divider()
@@ -1186,7 +1206,7 @@ with tab_dropbox:
                     if st.button(f"▶️ PREVIEW", key=f"prev_{i}"):
                         temp_name = "temp_preview_reel.mp4"
                         with st.spinner("Rendering..."):
-                            # Save params so we can re-use them for uncropped version later
+                            # Save params CRITICAL for the Uncropped version later
                             st.session_state.last_render_params = {
                                 'url': db_url, 'ts': ts, 'dur': clip_dur, 'fx': effect_choice
                             }
@@ -1920,6 +1940,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
