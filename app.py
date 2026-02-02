@@ -308,8 +308,8 @@ def save_ai_image_to_storage(image_bytes):
 # --- MOVED TO LEFT MARGIN (GLOBAL SCOPE) ---
 def upload_to_youtube_direct(video_path, title, description, scheduled_time=None, thumbnail_path=None):
     """
-    Uploads directly to YouTube using local keys. 
-    Handles Immediate/Scheduled uploads AND Custom Thumbnails.
+    Uploads directly to YouTube. 
+    Gracefully handles Thumbnail failures (common with Shorts).
     """
     try:
         # 1. Rebuild Credentials
@@ -326,7 +326,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         # 2. Configure Logic
         if scheduled_time:
             publish_at = scheduled_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            privacy = "private" # YouTube API requires 'private' if 'publishAt' is set
+            privacy = "private"
         else:
             publish_at = None
             privacy = "public"
@@ -337,17 +337,15 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
                 'title': title,
                 'description': description,
                 'tags': ['Ghost Dimension', 'Paranormal', 'Ghost Hunting', 'Scary', 'Evidence'],
-                'categoryId': '24' # 24 = Entertainment (Better for Ads than 22)
+                'categoryId': '24'
             },
             'status': {
                 'privacyStatus': privacy,
-                'selfDeclaredMadeForKids': False, # REQUIRED for Monetization
+                'selfDeclaredMadeForKids': False,
                 'embeddable': True,
                 'publicStatsViewable': True
             }
         }
-        
-        # Schedule Logic
         if publish_at:
             body['status']['publishAt'] = publish_at
 
@@ -357,7 +355,7 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
             part=','.join(body.keys()),
             body=body,
             media_body=media,
-            notifySubscribers=True # Ensure subs get the bell notification
+            notifySubscribers=True
         )
         
         response = None
@@ -366,16 +364,20 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
         
         video_id = response['id']
 
-        # 5. Upload Thumbnail (If provided)
+        # 5. Upload Thumbnail (With Safety Net)
         if thumbnail_path and os.path.exists(thumbnail_path):
             try:
-                st.toast("🖼️ Uploading Thumbnail to YouTube...")
+                st.toast("🖼️ Uploading Thumbnail...")
                 youtube.thumbnails().set(
                     videoId=video_id,
                     media_body=MediaFileUpload(thumbnail_path)
                 ).execute()
             except Exception as e:
-                st.error(f"Thumbnail Upload Failed: {e}")
+                # If it's a Short, this error is expected. We just log it and move on.
+                if "forbidden" in str(e).lower() or "403" in str(e):
+                    st.info(f"ℹ️ Thumbnail skipped (YouTube does not allow custom thumbnails on Shorts via API). Video is fine.")
+                else:
+                    st.warning(f"⚠️ Thumbnail failed: {e}")
         
         return f"https://youtu.be/{video_id}"
 
@@ -2044,6 +2046,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
