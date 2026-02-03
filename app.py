@@ -319,7 +319,11 @@ def upload_to_youtube_direct(video_path, title, description, scheduled_time=None
             token_uri="https://oauth2.googleapis.com/token",
             client_id=st.secrets["YOUTUBE_CLIENT_ID"],
             client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
-            scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
+            scopes=[
+                'https://www.googleapis.com/auth/youtube.upload',
+                'https://www.googleapis.com/auth/youtube.force-ssl', 
+                'https://www.googleapis.com/auth/youtube.readonly'
+            ]
         )
         youtube = build('youtube', 'v3', credentials=creds)
 
@@ -460,6 +464,86 @@ def scan_for_viral_shorts():
 
     except Exception as e:
         return f"❌ Hunter Failed: {e}"
+
+# --- COMMUNITY MANAGER LOGIC ---
+def scan_comments_for_review(limit=20):
+    """Scans channel for unanswered comments & drafts replies."""
+    pending_list = []
+    try:
+        creds = Credentials(
+            token=st.secrets["YOUTUBE_TOKEN"],
+            refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+            client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+            scopes=['https://www.googleapis.com/auth/youtube.force-ssl']
+        )
+        youtube = build('youtube', 'v3', credentials=creds)
+
+        # Get Channel ID
+        my_channel = youtube.channels().list(mine=True, part='id').execute()
+        my_id = my_channel['items'][0]['id']
+
+        # Get Comments
+        threads = youtube.commentThreads().list(
+            part='snippet,replies', allThreadsRelatedToChannelId=my_id, order='time', maxResults=limit, textFormat='plainText'
+        ).execute()
+
+        for thread in threads.get('items', []):
+            top_comment = thread['snippet']['topLevelComment']['snippet']
+            comment_id = thread['id']
+            text = top_comment['textDisplay']
+            author_id = top_comment.get('authorChannelId', {}).get('value', '')
+            vid_id = top_comment.get('videoId')
+
+            # Skip me
+            if author_id == my_id: continue
+
+            # Check if already replied
+            already_replied = False
+            if thread['snippet']['totalReplyCount'] > 0:
+                if 'replies' in thread:
+                    for r in thread['replies']['comments']:
+                        if r['snippet']['authorChannelId']['value'] == my_id:
+                            already_replied = True; break
+            
+            if not already_replied:
+                content_type = "Community Post"; content_title = "Channel Update"
+                if vid_id:
+                    try:
+                        vid_info = youtube.videos().list(part='snippet', id=vid_id).execute()
+                        content_title = vid_info['items'][0]['snippet']['title']; content_type = "Video"
+                    except: pass
+
+                # Generate AI Draft
+                prompt = f"""Act as 'Ghost Dimension' lead investigator. Reply to: "{text}" on {content_type}: "{content_title}".
+                RULES: SKEPTICS? Guarantee authenticity politely. FANS? "Thanks for support! 👻" (No location mentions).
+                Max 2 sentences. One emoji."""
+                
+                try:
+                    response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+                    draft = response.text.strip().replace('"', '')
+                    pending_list.append({"id": comment_id, "author": top_comment['authorDisplayName'], "text": text, "video": content_title, "draft": draft})
+                except: pass
+        return pending_list
+    except Exception as e:
+        st.error(f"Scan Error: {e}"); return []
+
+def post_comment_reply(comment_id, reply_text):
+    try:
+        creds = Credentials(
+            token=st.secrets["YOUTUBE_TOKEN"],
+            refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["YOUTUBE_CLIENT_ID"],
+            client_secret=st.secrets["YOUTUBE_CLIENT_SECRET"],
+            scopes=['https://www.googleapis.com/auth/youtube.force-ssl']
+        )
+        youtube = build('youtube', 'v3', credentials=creds)
+        youtube.comments().insert(part='snippet', body={'snippet': {'parentId': comment_id, 'textOriginal': reply_text}}).execute()
+        return True
+    except Exception as e:
+        st.error(f"Post Error: {e}"); return False
 
 def update_youtube_stats():
     """
@@ -667,7 +751,8 @@ st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIM
 st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
 
 # TABS:
-tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics, tab_inspo = st.tabs(["✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS", "💡 INSPO"])
+tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics, tab_inspo, tab_community = st.tabs([
+    "✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS", "💡 INSPO", "💬 COMMUNITY"])
 
 # --- TAB 1: NANO GENERATOR ---
 with tab_gen:
@@ -1690,6 +1775,52 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
+
+# --- TAB 7: COMMUNITY MANAGER ---
+with tab_community:
+    c_title, c_scan = st.columns([3, 1])
+    with c_title: st.subheader("💬 Community Inbox")
+    
+    if "inbox_comments" not in st.session_state: st.session_state.inbox_comments = []
+
+    with c_scan:
+        scan_qty = st.selectbox("Scan Depth", [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], index=1, label_visibility="collapsed")
+        if st.button("🔄 SCAN FOR NEW", type="primary", use_container_width=True):
+            with st.spinner("Reading comments..."):
+                st.session_state.inbox_comments = scan_comments_for_review(limit=scan_qty)
+                st.rerun()
+
+    if st.session_state.inbox_comments:
+        count = len(st.session_state.inbox_comments)
+        st.info(f"📬 Found {count} unanswered comments.")
+        
+        if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
+            progress = st.progress(0)
+            for i, item in enumerate(st.session_state.inbox_comments):
+                final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
+                post_comment_reply(item['id'], final_text)
+                progress.progress((i + 1) / count)
+                import time; time.sleep(1.0)
+            st.session_state.inbox_comments = []; st.success("🎉 Done!"); st.rerun()
+
+        st.divider()
+        for i, item in enumerate(st.session_state.inbox_comments):
+            with st.container(border=True):
+                c_info, c_edit, c_act = st.columns([2, 3, 1])
+                with c_info:
+                    st.markdown(f"**👤 {item['author']}**"); st.caption(f" on: *{item['video']}*")
+                    st.info(f"\"{item['text']}\"")
+                with c_edit:
+                    new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
+                with c_act:
+                    st.write("")
+                    if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
+                        if post_comment_reply(item['id'], new_draft):
+                            st.toast(f"Replied!"); st.session_state.inbox_comments.pop(i); st.rerun()
+                    if st.button("🗑️ Ignore", key=f"btn_del_{item['id']}", use_container_width=True):
+                        st.session_state.inbox_comments.pop(i); st.rerun()
+    else:
+        st.info("🎉 Inbox Zero! Click Scan to find new comments.")
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2046,6 +2177,7 @@ with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
                             data={'code': auth_code, 'grant_type': 'authorization_code'}, 
                             auth=(a_key, a_secret))
         st.json(res.json()) # Copy 'refresh_token' to Secrets
+
 
 
 
