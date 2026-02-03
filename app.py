@@ -466,13 +466,13 @@ def scan_for_viral_shorts():
         return f"❌ Hunter Failed: {e}"
 
 # --- COMMUNITY MANAGER LOGIC (STRICT SORTING) ---
-# --- COMMUNITY MANAGER LOGIC (OVER-FETCH & SORT) ---
+# --- UPDATED: STRICTER AI PROMPT ---
 def scan_comments_for_review(limit=20):
     """
     1. Fetches 100 comments (API Max).
     2. Filters out replied/own comments.
     3. Sorts by Date (Newest First).
-    4. Returns the top 'limit' (e.g. 20) for review.
+    4. Uses STRICT AI rules to stop defensive replies to fans.
     """
     pending_list = []
     scanned = 0
@@ -493,12 +493,12 @@ def scan_comments_for_review(limit=20):
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # --- KEY CHANGE: Always fetch 100 to check deep history ---
+        # Always fetch 100 to check deep history
         threads = youtube.commentThreads().list(
             part='snippet,replies',
             allThreadsRelatedToChannelId=my_id, 
             order='time',
-            maxResults=100, # Max allowed by YouTube
+            maxResults=100, 
             textFormat='plainText'
         ).execute()
 
@@ -511,15 +511,11 @@ def scan_comments_for_review(limit=20):
             text = top_comment['textDisplay']
             author_id = top_comment.get('authorChannelId', {}).get('value', '')
             vid_id = top_comment.get('videoId')
-            published_at = top_comment['publishedAt'] # Capture Time
+            published_at = top_comment['publishedAt'] 
 
             # SKIP LOGIC
             should_skip = False
-            
-            # 1. Skip my own
             if author_id == my_id: should_skip = True
-
-            # 2. Check if I already replied
             if not should_skip and thread['snippet']['totalReplyCount'] > 0:
                 if 'replies' in thread:
                     for r in thread['replies']['comments']:
@@ -542,19 +538,32 @@ def scan_comments_for_review(limit=20):
                     content_type = "Video"
                 except: pass
 
+            # --- THE FIXED PROMPT ---
             prompt = f"""
-            Act as 'Ghost Dimension' lead investigator.
-            Viewer comment: "{text}" on {content_type}: "{content_title}".
-            Goal: Write a friendly, authentic reply.
-            RULES:
-            - SKEPTIC? Guarantee authenticity politely. "I guarantee no faking."
-            - FAN? "Thanks for the support! We work hard for you. 👻"
-            - Constraints: Max 2 sentences. One emoji.
+            You are the social media manager for 'Ghost Dimension'.
+            Viewer Comment: "{text}"
+            Context: They commented on {content_type}: "{content_title}"
+            
+            INSTRUCTIONS:
+            1. Classify the comment type.
+            2. Write a reply based ONLY on that type.
+            
+            TYPE A: POSITIVE / FRIENDLY ("Love the show", "Great video", "Hello", "Good evening")
+            - Reply: "Thanks so much for watching! 👻" or "Hope you enjoy it! 🕯️" or "Appreciate the support!"
+            - CRITICAL RULE: If they are nice, DO NOT mention "faking", "evidence", "authenticity", or "investigation". Just be a normal human and say thanks.
+            
+            TYPE B: SKEPTICAL / HATE ("Fake", "Acting", "String", "App")
+            - Reply: "I can assure you this is 100% real. We don't fake anything."
+            
+            TYPE C: QUESTION
+            - Reply: Answer helpfully.
+            
+            OUTPUT: Just the final reply text. No quotes.
             """
             
             try:
                 response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-                draft = response.text.strip().replace('"', '')
+                draft = response.text.replace("Reply:", "").strip().replace('"', '')
                 
                 pending_list.append({
                     "id": comment_id,
@@ -566,12 +575,10 @@ def scan_comments_for_review(limit=20):
                 })
             except: pass
         
-        # --- CRITICAL FIX: Sort by Date ---
-        # Sorts the entire valid list by date (Newest First)
+        # Sort by date
         pending_list.sort(key=lambda x: x['date'], reverse=True)
         
-        # --- CRITICAL FIX: Slice AFTER sorting ---
-        # Returns only the top 'limit' items (e.g. 20)
+        # Return filtered list
         return pending_list[:limit], scanned, ignored
 
     except Exception as e:
@@ -2295,6 +2302,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
