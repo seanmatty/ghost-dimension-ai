@@ -467,9 +467,16 @@ def scan_for_viral_shorts():
 
 # --- COMMUNITY MANAGER LOGIC ---
 def scan_comments_for_review(limit=20):
-    """Scans channel for unanswered comments & drafts replies."""
+    """
+    Scans channel for unanswered comments.
+    Returns: (list of drafts, count_scanned, count_ignored)
+    """
     pending_list = []
+    scanned = 0
+    ignored = 0
+    
     try:
+        # Auth
         creds = Credentials(
             token=st.secrets["YOUTUBE_TOKEN"],
             refresh_token=st.secrets["YOUTUBE_REFRESH_TOKEN"],
@@ -480,55 +487,94 @@ def scan_comments_for_review(limit=20):
         )
         youtube = build('youtube', 'v3', credentials=creds)
 
-        # Get Channel ID
+        # Get My Channel ID
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # Get Comments
+        # Get Threads
         threads = youtube.commentThreads().list(
-            part='snippet,replies', allThreadsRelatedToChannelId=my_id, order='time', maxResults=limit, textFormat='plainText'
+            part='snippet,replies',
+            allThreadsRelatedToChannelId=my_id, 
+            order='time',
+            maxResults=limit, 
+            textFormat='plainText'
         ).execute()
 
-        for thread in threads.get('items', []):
+        items = threads.get('items', [])
+        scanned = len(items)
+
+        for thread in items:
             top_comment = thread['snippet']['topLevelComment']['snippet']
             comment_id = thread['id']
             text = top_comment['textDisplay']
             author_id = top_comment.get('authorChannelId', {}).get('value', '')
             vid_id = top_comment.get('videoId')
+            published_at = top_comment['publishedAt'] # Capture time for sorting
 
-            # Skip me
-            if author_id == my_id: continue
+            # SKIP LOGIC
+            should_skip = False
+            
+            # 1. Skip my own comments
+            if author_id == my_id: should_skip = True
 
-            # Check if already replied
-            already_replied = False
-            if thread['snippet']['totalReplyCount'] > 0:
+            # 2. Check if I already replied
+            if not should_skip and thread['snippet']['totalReplyCount'] > 0:
                 if 'replies' in thread:
                     for r in thread['replies']['comments']:
                         if r['snippet']['authorChannelId']['value'] == my_id:
-                            already_replied = True; break
+                            should_skip = True
+                            break
             
-            if not already_replied:
-                content_type = "Community Post"; content_title = "Channel Update"
-                if vid_id:
-                    try:
-                        vid_info = youtube.videos().list(part='snippet', id=vid_id).execute()
-                        content_title = vid_info['items'][0]['snippet']['title']; content_type = "Video"
-                    except: pass
-
-                # Generate AI Draft
-                prompt = f"""Act as 'Ghost Dimension' lead investigator. Reply to: "{text}" on {content_type}: "{content_title}".
-                RULES: SKEPTICS? Guarantee authenticity politely. FANS? "Thanks for support! 👻" (No location mentions).
-                Max 2 sentences. One emoji."""
-                
+            if should_skip:
+                ignored += 1
+                continue
+            
+            # PROCESS (If not skipped)
+            content_type = "Community Post"
+            content_title = "Channel Update"
+            
+            if vid_id:
                 try:
-                    response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-                    draft = response.text.strip().replace('"', '')
-                    pending_list.append({"id": comment_id, "author": top_comment['authorDisplayName'], "text": text, "video": content_title, "draft": draft})
+                    vid_info = youtube.videos().list(part='snippet', id=vid_id).execute()
+                    content_title = vid_info['items'][0]['snippet']['title']
+                    content_type = "Video"
                 except: pass
-        return pending_list
-    except Exception as e:
-        st.error(f"Scan Error: {e}"); return []
 
+            prompt = f"""
+            Act as 'Ghost Dimension' lead investigator.
+            Viewer comment: "{text}" on {content_type}: "{content_title}".
+            
+            Goal: Write a friendly, authentic reply.
+            
+            RULES:
+            - SKEPTIC? Guarantee authenticity politely. "I guarantee no faking."
+            - FAN? "Thanks for the support! We work hard for you. 👻"
+            - Constraints: Max 2 sentences. One emoji.
+            """
+            
+            try:
+                response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+                draft = response.text.strip().replace('"', '')
+                
+                pending_list.append({
+                    "id": comment_id,
+                    "author": top_comment['authorDisplayName'],
+                    "text": text,
+                    "video": content_title,
+                    "draft": draft,
+                    "date": published_at # Store for sorting
+                })
+            except: pass
+        
+        # FINAL SORT: Strict Chronological Order (Newest First)
+        pending_list.sort(key=lambda x: x['date'], reverse=True)
+                
+        return pending_list, scanned, ignored
+
+    except Exception as e:
+        st.error(f"Scan Error: {e}")
+        return [], 0, 0
+        
 def post_comment_reply(comment_id, reply_text):
     try:
         creds = Credentials(
@@ -1783,20 +1829,32 @@ with tab_inspo:
 # --- TAB 7: COMMUNITY MANAGER ---
 with tab_community:
     c_title, c_scan = st.columns([3, 1])
-    with c_title: st.subheader("💬 Community Inbox")
+    with c_title:
+        st.subheader("💬 Community Inbox")
     
+    # Session State
     if "inbox_comments" not in st.session_state: st.session_state.inbox_comments = []
+    if "scan_stats" not in st.session_state: st.session_state.scan_stats = {"scanned": 0, "ignored": 0}
 
     with c_scan:
-        scan_qty = st.selectbox("Scan Depth", [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], index=1, label_visibility="collapsed")
-        if st.button("🔄 SCAN FOR NEW", type="primary", use_container_width=True):
-            with st.spinner("Reading comments..."):
-                st.session_state.inbox_comments = scan_comments_for_review(limit=scan_qty)
+        scan_qty = st.selectbox("Check Last X Comments", [10, 20, 50, 100], index=1, label_visibility="collapsed")
+        
+        if st.button("🔄 SCAN CHANNEL", type="primary", use_container_width=True):
+            with st.spinner("Analyzing channel history..."):
+                # Unpack the 3 return values
+                drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
+                st.session_state.inbox_comments = drafts
+                st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
 
+    # --- SHOW STATS ---
+    if st.session_state.scan_stats['scanned'] > 0:
+        s = st.session_state.scan_stats
+        st.caption(f"📊 Report: Checked last **{s['scanned']}** events. Ignored **{s['ignored']}** (already replied/yours). Found **{len(st.session_state.inbox_comments)}** new actions.")
+
+    # --- INBOX LOGIC ---
     if st.session_state.inbox_comments:
         count = len(st.session_state.inbox_comments)
-        st.info(f"📬 Found {count} unanswered comments.")
         
         if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
             progress = st.progress(0)
@@ -1805,26 +1863,41 @@ with tab_community:
                 post_comment_reply(item['id'], final_text)
                 progress.progress((i + 1) / count)
                 import time; time.sleep(1.0)
-            st.session_state.inbox_comments = []; st.success("🎉 Done!"); st.rerun()
+            
+            st.session_state.inbox_comments = []
+            st.success("🎉 All replies sent!")
+            st.rerun()
 
         st.divider()
+
         for i, item in enumerate(st.session_state.inbox_comments):
             with st.container(border=True):
                 c_info, c_edit, c_act = st.columns([2, 3, 1])
+                
                 with c_info:
-                    st.markdown(f"**👤 {item['author']}**"); st.caption(f" on: *{item['video']}*")
+                    st.markdown(f"**👤 {item['author']}**")
+                    st.caption(f" on: *{item['video']}*")
                     st.info(f"\"{item['text']}\"")
+                
                 with c_edit:
                     new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
+                
                 with c_act:
-                    st.write("")
+                    st.write("") 
                     if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
                         if post_comment_reply(item['id'], new_draft):
-                            st.toast(f"Replied!"); st.session_state.inbox_comments.pop(i); st.rerun()
+                            st.toast(f"Replied to {item['author']}!")
+                            st.session_state.inbox_comments.pop(i)
+                            st.rerun()
+                            
                     if st.button("🗑️ Ignore", key=f"btn_del_{item['id']}", use_container_width=True):
-                        st.session_state.inbox_comments.pop(i); st.rerun()
+                        st.session_state.inbox_comments.pop(i)
+                        st.rerun()
     else:
-        st.info("🎉 Inbox Zero! Click Scan to find new comments.")
+        if st.session_state.scan_stats['scanned'] > 0:
+            st.success("🎉 You are all caught up! No unanswered comments in this range.")
+        else:
+            st.info("👋 Click SCAN to check your channel.")
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2218,6 +2291,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
