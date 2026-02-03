@@ -1160,10 +1160,30 @@ with tab_upload:
                                 try:
                                     # LOGIC A: AI GENERATION
                                     if cap_mode == "✨ Create New":
-                                        if u_context: instr = f"MANDATORY: Subject is '{u_context}'."
-                                        else: instr = "Analyze the image."
+                                        # Construct a specific instruction for people
+                                        people_rule = ""
+                                        if u_context: 
+                                            people_rule = f"The people in this image are: {u_context}. Use these names as fact. Do NOT say you cannot identify them."
+                                            instr = f"Subject context: {u_context}."
+                                        else: 
+                                            people_rule = "If there are people, refer to them as 'The Team' or 'The Investigators'."
+                                            instr = "Analyze the image."
                                         
-                                        prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {instr} Strategy: {u_strat}. Output: Final caption."
+                                        # STRICT PROMPT to stop the "I can't identify" refusal
+                                        prompt = f"""
+                                        Role: Social Media Lead for 'Ghost Dimension'.
+                                        Task: Write a caption for this image.
+                                        Strategy: {u_strat}
+                                        Brand Info: {get_brand_knowledge()}
+                                        
+                                        CONTEXT: {instr}
+                                        {people_rule}
+
+                                        CRITICAL RULES:
+                                        1. Do NOT output safety warnings like "I cannot identify these individuals".
+                                        2. Do NOT say "Here is a caption".
+                                        3. JUST output the final caption text.
+                                        """
                                         
                                         try:
                                             # Attempt 1: Vision (Look at image)
@@ -1198,8 +1218,11 @@ with tab_upload:
 
                                     # Save Draft
                                     if final_caption:
+                                        # Final cleanup in case AI still disobeyed
+                                        clean_cap = final_caption.replace("I cannot identify these individuals, but", "").strip()
+                                        
                                         supabase.table("social_posts").insert({
-                                            "caption": final_caption, 
+                                            "caption": clean_cap, 
                                             "image_url": img['file_url'], 
                                             "topic": topic_tag, 
                                             "status": "draft"
@@ -2316,6 +2339,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
