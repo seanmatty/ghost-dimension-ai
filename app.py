@@ -540,25 +540,23 @@ def scan_comments_for_review(limit=20):
 
             # --- THE FIXED PROMPT ---
             prompt = f"""
-            You are the social media manager for 'Ghost Dimension'.
+            You are the community manager for 'Ghost Dimension' (Paranormal TV Show).
+            
             Viewer Comment: "{text}"
             Context: They commented on {content_type}: "{content_title}"
             
-            INSTRUCTIONS:
-            1. Classify the comment type.
-            2. Write a reply based ONLY on that type.
+            TASK: Write a short, human reply (Max 2 sentences).
             
-            TYPE A: POSITIVE / FRIENDLY ("Love the show", "Great video", "Hello", "Good evening")
-            - Reply: "Thanks so much for watching! 👻" or "Hope you enjoy it! 🕯️" or "Appreciate the support!"
-            - CRITICAL RULE: If they are nice, DO NOT mention "faking", "evidence", "authenticity", or "investigation". Just be a normal human and say thanks.
+            STRATEGIES:
+            1. SOCIAL/NICE ("Love the show", "Hi guys"): Reply warmly. "Thanks for watching! 👻"
+            2. QUESTIONS ("Is this free?"): Answer helpfully. "Yes, enjoy the content! 🕯️"
+            3. SKEPTIC ("Fake"): "I guarantee no faking is involved. We take this seriously."
             
-            TYPE B: SKEPTICAL / HATE ("Fake", "Acting", "String", "App")
-            - Reply: "I can assure you this is 100% real. We don't fake anything."
-            
-            TYPE C: QUESTION
-            - Reply: Answer helpfully.
-            
-            OUTPUT: Just the final reply text. No quotes.
+            IMPORTANT: 
+            - Do NOT explain your reasoning. 
+            - Do NOT say "Here is the reply".
+            - Do NOT analyze the tone.
+            - JUST output the final reply text.
             """
             
             try:
@@ -2302,6 +2300,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
