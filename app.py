@@ -466,12 +466,12 @@ def scan_for_viral_shorts():
         return f"❌ Hunter Failed: {e}"
 
 # --- COMMUNITY MANAGER LOGIC (STRICT SORTING) ---
-# --- COMMUNITY MANAGER LOGIC (OVER-FETCH & SORT) ---
+# --- COMMUNITY MANAGER LOGIC (CLEAN OUTPUT) ---
 def scan_comments_for_review(limit=20):
     """
     Scans channel for unanswered comments.
     Sorts by DATE.
-    Uses smarter prompt to avoid being defensive on nice comments.
+    Forces Gemini to output ONLY the final reply text (no analysis).
     """
     pending_list = []
     scanned = 0
@@ -492,7 +492,7 @@ def scan_comments_for_review(limit=20):
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # Over-fetch to ensure we get enough actionable items
+        # Over-fetch 100 items
         threads = youtube.commentThreads().list(
             part='snippet,replies',
             allThreadsRelatedToChannelId=my_id, 
@@ -526,6 +526,7 @@ def scan_comments_for_review(limit=20):
                 ignored += 1
                 continue
             
+            # CONTEXT
             content_type = "Community Post"
             content_title = "Channel Update"
             
@@ -536,38 +537,31 @@ def scan_comments_for_review(limit=20):
                     content_type = "Video"
                 except: pass
 
-            # --- IMPROVED PROMPT ---
+            # --- STRICTER PROMPT ---
             prompt = f"""
-            You are the lead investigator of 'Ghost Dimension' (UK Paranormal Show).
-            Reply to this viewer comment: "{text}"
-            Context: They commented on a {content_type} titled "{content_title}".
+            You are the community manager for 'Ghost Dimension' (Paranormal TV Show).
             
-            YOUR INSTRUCTIONS:
-            1. Analyze the comment's tone.
-            2. Choose ONE strategy below:
+            Viewer Comment: "{text}"
+            Context: They commented on {content_type}: "{content_title}"
             
-            [STRATEGY A: SOCIAL / POLITE] 
-            - IF they say "Have a good night", "Love you guys", "Hello":
-            - REPLY: Be warm and reciprocal. e.g., "Hope you have a spooky evening too! 👻" or "Thanks for stopping by! 🕯️"
-            - CRITICAL: Do NOT mention "evidence", "faking", or "investigation" here. Just be a human.
+            TASK: Write a short, human reply (Max 2 sentences).
             
-            [STRATEGY B: EVIDENCE PRAISE]
-            - IF they praise specific evidence ("Great catch", "Scary EVP"):
-            - REPLY: "Glad you caught that! It was a chilling moment for us too. 👻"
+            STRATEGIES:
+            1. SOCIAL/NICE ("Love the show", "Hi guys"): Reply warmly. "Thanks for watching! 👻"
+            2. QUESTIONS ("Is this free?"): Answer helpfully. "Yes, enjoy the content! 🕯️"
+            3. SKEPTIC ("Fake"): "I guarantee no faking is involved. We take this seriously."
             
-            [STRATEGY C: SKEPTIC / ATTACK]
-            - IF AND ONLY IF they say "fake", "string", "app", "acting":
-            - REPLY: "I can guarantee 100% no faking or tricks were used here. We take this seriously."
-            
-            CONSTRAINTS:
-            - Max 2 sentences.
-            - Use only ONE emoji.
-            - Never mention "this location" (keep it general).
+            IMPORTANT: 
+            - Do NOT explain your reasoning. 
+            - Do NOT say "Here is the reply".
+            - Do NOT analyze the tone.
+            - JUST output the final reply text.
             """
             
             try:
                 response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-                draft = response.text.strip().replace('"', '')
+                # Extra cleanup to remove any potential "Reply:" prefixes
+                draft = response.text.replace("Reply:", "").replace("Analysis:", "").strip().replace('"', '')
                 
                 pending_list.append({
                     "id": comment_id,
@@ -2305,6 +2299,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
