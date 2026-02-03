@@ -746,10 +746,14 @@ def extract_frames_from_url(video_url, num_frames):
         return [], 0
 
 # --- MAIN TITLE ---
-total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
-st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
-st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev if total_ev else 0} entries</p>", unsafe_allow_html=True)
+# 🛡️ SAFETY WRAPPER: Prevents app crash if Supabase connection flickers
+try:
+    total_ev = supabase.table("social_posts").select("id", count="exact").eq("status", "posted").execute().count
+except Exception:
+    total_ev = 0 # Default to 0 if connection fails temporarily
 
+st.markdown(f"<h1 style='text-align: center; margin-bottom: 0px;'>👻 GHOST DIMENSION <span style='color: #00ff41; font-size: 20px;'>STUDIO</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center; color: #888;'>Uploads: {total_ev} entries</p>", unsafe_allow_html=True)
 # TABS:
 tab_gen, tab_upload, tab_dropbox, tab_video_vault, tab_analytics, tab_inspo, tab_community = st.tabs([
     "✨ NANO GENERATOR", "📸 UPLOAD IMAGE", "📦 DROPBOX LAB", "🎬 VIDEO VAULT", "📊 ANALYTICS", "💡 INSPO", "💬 COMMUNITY"])
@@ -2214,6 +2218,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
