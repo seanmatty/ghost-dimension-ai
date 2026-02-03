@@ -466,12 +466,13 @@ def scan_for_viral_shorts():
         return f"❌ Hunter Failed: {e}"
 
 # --- COMMUNITY MANAGER LOGIC (STRICT SORTING) ---
-# --- COMMUNITY MANAGER LOGIC (CLEAN OUTPUT) ---
+# --- COMMUNITY MANAGER LOGIC (OVER-FETCH & SORT) ---
 def scan_comments_for_review(limit=20):
     """
-    Scans channel for unanswered comments.
-    Sorts by DATE.
-    Forces Gemini to output ONLY the final reply text (no analysis).
+    1. Fetches 100 comments (API Max).
+    2. Filters out replied/own comments.
+    3. Sorts by Date (Newest First).
+    4. Returns the top 'limit' (e.g. 20) for review.
     """
     pending_list = []
     scanned = 0
@@ -492,12 +493,12 @@ def scan_comments_for_review(limit=20):
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # Over-fetch 100 items
+        # --- KEY CHANGE: Always fetch 100 to check deep history ---
         threads = youtube.commentThreads().list(
             part='snippet,replies',
             allThreadsRelatedToChannelId=my_id, 
             order='time',
-            maxResults=100, 
+            maxResults=100, # Max allowed by YouTube
             textFormat='plainText'
         ).execute()
 
@@ -510,11 +511,15 @@ def scan_comments_for_review(limit=20):
             text = top_comment['textDisplay']
             author_id = top_comment.get('authorChannelId', {}).get('value', '')
             vid_id = top_comment.get('videoId')
-            published_at = top_comment['publishedAt'] 
+            published_at = top_comment['publishedAt'] # Capture Time
 
             # SKIP LOGIC
             should_skip = False
+            
+            # 1. Skip my own
             if author_id == my_id: should_skip = True
+
+            # 2. Check if I already replied
             if not should_skip and thread['snippet']['totalReplyCount'] > 0:
                 if 'replies' in thread:
                     for r in thread['replies']['comments']:
@@ -526,7 +531,7 @@ def scan_comments_for_review(limit=20):
                 ignored += 1
                 continue
             
-            # CONTEXT
+            # PROCESS
             content_type = "Community Post"
             content_title = "Channel Update"
             
@@ -537,31 +542,19 @@ def scan_comments_for_review(limit=20):
                     content_type = "Video"
                 except: pass
 
-            # --- STRICTER PROMPT ---
             prompt = f"""
-            You are the community manager for 'Ghost Dimension' (Paranormal TV Show).
-            
-            Viewer Comment: "{text}"
-            Context: They commented on {content_type}: "{content_title}"
-            
-            TASK: Write a short, human reply (Max 2 sentences).
-            
-            STRATEGIES:
-            1. SOCIAL/NICE ("Love the show", "Hi guys"): Reply warmly. "Thanks for watching! 👻"
-            2. QUESTIONS ("Is this free?"): Answer helpfully. "Yes, enjoy the content! 🕯️"
-            3. SKEPTIC ("Fake"): "I guarantee no faking is involved. We take this seriously."
-            
-            IMPORTANT: 
-            - Do NOT explain your reasoning. 
-            - Do NOT say "Here is the reply".
-            - Do NOT analyze the tone.
-            - JUST output the final reply text.
+            Act as 'Ghost Dimension' lead investigator.
+            Viewer comment: "{text}" on {content_type}: "{content_title}".
+            Goal: Write a friendly, authentic reply.
+            RULES:
+            - SKEPTIC? Guarantee authenticity politely. "I guarantee no faking."
+            - FAN? "Thanks for the support! We work hard for you. 👻"
+            - Constraints: Max 2 sentences. One emoji.
             """
             
             try:
                 response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-                # Extra cleanup to remove any potential "Reply:" prefixes
-                draft = response.text.replace("Reply:", "").replace("Analysis:", "").strip().replace('"', '')
+                draft = response.text.strip().replace('"', '')
                 
                 pending_list.append({
                     "id": comment_id,
@@ -573,9 +566,12 @@ def scan_comments_for_review(limit=20):
                 })
             except: pass
         
-        # Sort by date
+        # --- CRITICAL FIX: Sort by Date ---
+        # Sorts the entire valid list by date (Newest First)
         pending_list.sort(key=lambda x: x['date'], reverse=True)
-                
+        
+        # --- CRITICAL FIX: Slice AFTER sorting ---
+        # Returns only the top 'limit' items (e.g. 20)
         return pending_list[:limit], scanned, ignored
 
     except Exception as e:
@@ -2299,6 +2295,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
