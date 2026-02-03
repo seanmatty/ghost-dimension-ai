@@ -469,7 +469,6 @@ def scan_for_viral_shorts():
 def scan_comments_for_review(limit=20):
     """
     Scans channel for unanswered comments.
-    Sorts by DATE (Newest First) to fix 'random' order.
     Returns: (list of drafts, count_scanned, count_ignored)
     """
     pending_list = []
@@ -492,7 +491,7 @@ def scan_comments_for_review(limit=20):
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # Get Threads (Channel Wide)
+        # Get Threads
         threads = youtube.commentThreads().list(
             part='snippet,replies',
             allThreadsRelatedToChannelId=my_id, 
@@ -510,9 +509,7 @@ def scan_comments_for_review(limit=20):
             text = top_comment['textDisplay']
             author_id = top_comment.get('authorChannelId', {}).get('value', '')
             vid_id = top_comment.get('videoId')
-            
-            # --- CRITICAL FIX: Capture Date for Sorting ---
-            published_at = top_comment['publishedAt'] 
+            published_at = top_comment['publishedAt'] # Capture time for sorting
 
             # SKIP LOGIC
             should_skip = False
@@ -532,7 +529,7 @@ def scan_comments_for_review(limit=20):
                 ignored += 1
                 continue
             
-            # PROCESS
+            # PROCESS (If not skipped)
             content_type = "Community Post"
             content_title = "Channel Update"
             
@@ -546,7 +543,9 @@ def scan_comments_for_review(limit=20):
             prompt = f"""
             Act as 'Ghost Dimension' lead investigator.
             Viewer comment: "{text}" on {content_type}: "{content_title}".
+            
             Goal: Write a friendly, authentic reply.
+            
             RULES:
             - SKEPTIC? Guarantee authenticity politely. "I guarantee no faking."
             - FAN? "Thanks for the support! We work hard for you. 👻"
@@ -563,11 +562,11 @@ def scan_comments_for_review(limit=20):
                     "text": text,
                     "video": content_title,
                     "draft": draft,
-                    "date": published_at # Store date to sort later
+                    "date": published_at # Store for sorting
                 })
             except: pass
         
-        # --- CRITICAL FIX: Force Sort by Date (Newest on Top) ---
+        # FINAL SORT: Strict Chronological Order (Newest First)
         pending_list.sort(key=lambda x: x['date'], reverse=True)
                 
         return pending_list, scanned, ignored
@@ -1842,7 +1841,7 @@ with tab_community:
         
         if st.button("🔄 SCAN CHANNEL", type="primary", use_container_width=True):
             with st.spinner("Analyzing channel history..."):
-                # Unpack the 3 return values properly
+                # Unpack the 3 return values
                 drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
                 st.session_state.inbox_comments = drafts
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
@@ -1879,8 +1878,6 @@ with tab_community:
                     st.markdown(f"**👤 {item['author']}**")
                     st.caption(f" on: *{item['video']}*")
                     st.info(f"\"{item['text']}\"")
-                    # Show date for debugging
-                    st.caption(f"📅 {item['date'][:10]}")
                 
                 with c_edit:
                     new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
@@ -2294,6 +2291,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
