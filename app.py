@@ -466,11 +466,13 @@ def scan_for_viral_shorts():
         return f"❌ Hunter Failed: {e}"
 
 # --- COMMUNITY MANAGER LOGIC (STRICT SORTING) ---
+# --- COMMUNITY MANAGER LOGIC (OVER-FETCH & SORT) ---
 def scan_comments_for_review(limit=20):
     """
-    Scans channel for unanswered comments.
-    Sorts by DATE (Newest First) to fix 'random' order.
-    Returns: (list of drafts, count_scanned, count_ignored)
+    1. Fetches 100 comments (API Max).
+    2. Filters out replied/own comments.
+    3. Sorts by Date (Newest First).
+    4. Returns the top 'limit' (e.g. 20) for review.
     """
     pending_list = []
     scanned = 0
@@ -488,16 +490,15 @@ def scan_comments_for_review(limit=20):
         )
         youtube = build('youtube', 'v3', credentials=creds)
 
-        # Get My Channel ID
         my_channel = youtube.channels().list(mine=True, part='id').execute()
         my_id = my_channel['items'][0]['id']
 
-        # Get Threads (Channel Wide)
+        # --- KEY CHANGE: Always fetch 100 to check deep history ---
         threads = youtube.commentThreads().list(
             part='snippet,replies',
             allThreadsRelatedToChannelId=my_id, 
             order='time',
-            maxResults=limit, 
+            maxResults=100, # Max allowed by YouTube
             textFormat='plainText'
         ).execute()
 
@@ -510,14 +511,12 @@ def scan_comments_for_review(limit=20):
             text = top_comment['textDisplay']
             author_id = top_comment.get('authorChannelId', {}).get('value', '')
             vid_id = top_comment.get('videoId')
-            
-            # --- CRITICAL FIX: Capture Date for Sorting ---
-            published_at = top_comment['publishedAt'] 
+            published_at = top_comment['publishedAt'] # Capture Time
 
             # SKIP LOGIC
             should_skip = False
             
-            # 1. Skip my own comments
+            # 1. Skip my own
             if author_id == my_id: should_skip = True
 
             # 2. Check if I already replied
@@ -563,14 +562,17 @@ def scan_comments_for_review(limit=20):
                     "text": text,
                     "video": content_title,
                     "draft": draft,
-                    "date": published_at # Store date to sort later
+                    "date": published_at
                 })
             except: pass
         
-        # --- CRITICAL FIX: Force Sort by Date (Newest on Top) ---
+        # --- CRITICAL FIX: Sort by Date ---
+        # Sorts the entire valid list by date (Newest First)
         pending_list.sort(key=lambda x: x['date'], reverse=True)
-                
-        return pending_list, scanned, ignored
+        
+        # --- CRITICAL FIX: Slice AFTER sorting ---
+        # Returns only the top 'limit' items (e.g. 20)
+        return pending_list[:limit], scanned, ignored
 
     except Exception as e:
         st.error(f"Scan Error: {e}")
@@ -1837,11 +1839,11 @@ with tab_community:
     if "scan_stats" not in st.session_state: st.session_state.scan_stats = {"scanned": 0, "ignored": 0}
 
     with c_scan:
-        scan_qty = st.selectbox("Check Last X Comments", [10, 20, 50, 100], index=1, label_visibility="collapsed")
+        # Note: This limit is how many you WANT TO SEE, not how many it scans (it always scans 100 now)
+        scan_qty = st.selectbox("Show Top X Unanswered", [10, 20, 50], index=1, label_visibility="collapsed")
         
         if st.button("🔄 SCAN CHANNEL", type="primary", use_container_width=True):
-            with st.spinner("Analyzing channel history..."):
-                # Unpack the 3 return values properly
+            with st.spinner("Analyzing last 100 interactions..."):
                 drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
                 st.session_state.inbox_comments = drafts
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
@@ -1850,7 +1852,7 @@ with tab_community:
     # --- SHOW STATS ---
     if st.session_state.scan_stats['scanned'] > 0:
         s = st.session_state.scan_stats
-        st.caption(f"📊 Report: Checked last **{s['scanned']}** events. Ignored **{s['ignored']}** (already replied/yours). Found **{len(st.session_state.inbox_comments)}** new actions.")
+        st.caption(f"📊 **Deep Scan Report:** Analyzed last **{s['scanned']}** channel events. Ignored **{s['ignored']}** (already replied/yours). Showing newest **{len(st.session_state.inbox_comments)}** requiring attention.")
 
     # --- INBOX LOGIC ---
     if st.session_state.inbox_comments:
@@ -1878,8 +1880,8 @@ with tab_community:
                     st.markdown(f"**👤 {item['author']}**")
                     st.caption(f" on: *{item['video']}*")
                     st.info(f"\"{item['text']}\"")
-                    # Show date for debugging
-                    st.caption(f"📅 {item['date'][:10]}")
+                    # Show date to confirm sorting works
+                    st.caption(f"📅 {item['date'][:10]} {item['date'][11:16]}")
                 
                 with c_edit:
                     new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
@@ -1897,7 +1899,7 @@ with tab_community:
                         st.rerun()
     else:
         if st.session_state.scan_stats['scanned'] > 0:
-            st.success("🎉 You are all caught up! No unanswered comments in this range.")
+            st.success("🎉 You are all caught up! No unanswered comments found in the last 100 events.")
         else:
             st.info("👋 Click SCAN to check your channel.")
         
@@ -2293,6 +2295,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
