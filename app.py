@@ -2165,18 +2165,56 @@ with st.expander("🛠️ SYSTEM MAINTENANCE & 7-DAY PURGE"):
         supabase.storage.from_("uploads").remove([f['image_url'].split('/')[-1] for f in old_files])
         st.success("Bandwidth cleared!"); st.rerun()
 
-with st.expander("🔑 DROPBOX REFRESH TOKEN GENERATOR"):
-    st.write("1. Get App Key/Secret from Dropbox Console.")
-    st.write("2. Open this URL in a new tab (replace YOUR_APP_KEY):")
-    st.code("https://www.dropbox.com/oauth2/authorize?client_id=YOUR_APP_KEY&token_access_type=offline&response_type=code")
-    a_key = st.text_input("App Key", key="db_k")
-    a_secret = st.text_input("App Secret", key="db_s")
-    auth_code = st.text_input("Paste Auth Code", key="db_a")
-    if st.button("🚀 GENERATE REFRESH TOKEN"):
-        res = requests.post('https://api.dropbox.com/oauth2/token', 
-                            data={'code': auth_code, 'grant_type': 'authorization_code'}, 
-                            auth=(a_key, a_secret))
-        st.json(res.json()) # Copy 'refresh_token' to Secrets
+# --- REPLACEMENT SECTION: YOUTUBE TOKEN GENERATOR ---
+with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
+    st.write("🔴 **Instructions to Fix 'Invalid Scope':**")
+    st.write("1. Enter your Client ID & Secret below (it grabs them from your secrets file).")
+    st.write("2. Click the link generated.")
+    st.write("3. **CHECK ALL BOXES** when Google asks for permissions (Manage Account, Manage Comments, etc).")
+    st.write("4. Copy the code Google gives you, paste it here, and click Generate.")
+    
+    # 1. Inputs (Pre-filled from secrets)
+    cid = st.text_input("Client ID", value=st.secrets.get("YOUTUBE_CLIENT_ID", ""))
+    csecret = st.text_input("Client Secret", value=st.secrets.get("YOUTUBE_CLIENT_SECRET", ""))
+    
+    # 2. Generate Link
+    if cid and csecret:
+        # These are the scopes needed for Uploading AND Commenting
+        scope_url = "https://www.googleapis.com/auth/youtube.upload+https://www.googleapis.com/auth/youtube.force-ssl+https://www.googleapis.com/auth/youtube.readonly"
+        
+        # Standard localhost redirect
+        redirect_uri = "http://localhost:8501" 
+        
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={cid}&redirect_uri={redirect_uri}&response_type=code&scope={scope_url}&access_type=offline&prompt=consent"
+        
+        st.markdown(f"👉 **[CLICK HERE TO AUTHORIZE NEW PERMISSIONS]({auth_url})**")
+        st.info("If the link redirects you to a 'This site can't be reached' page, look at the URL bar. Copy the text starting after `code=` and paste it below.")
+
+    # 3. Exchange Code for Token
+    auth_code = st.text_input("Paste Authorization Code Here", type="password")
+    
+    if st.button("🔄 GENERATE NEW TOKEN"):
+        if auth_code and cid and csecret:
+            try:
+                data = {
+                    'code': auth_code,
+                    'client_id': cid,
+                    'client_secret': csecret,
+                    'redirect_uri': 'http://localhost:8501',
+                    'grant_type': 'authorization_code'
+                }
+                r = requests.post('https://oauth2.googleapis.com/token', data=data)
+                result = r.json()
+                
+                if "refresh_token" in result:
+                    st.success("✅ SUCCESS! NEW TOKEN GENERATED:")
+                    st.code(result['refresh_token'])
+                    st.warning("👆 Copy this string. Open your `.streamlit/secrets.toml` file. Replace the old `YOUTUBE_REFRESH_TOKEN` with this new one. Then restart the app.")
+                else:
+                    st.error(f"Failed to get token: {result}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
 
 
 
