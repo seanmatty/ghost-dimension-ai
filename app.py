@@ -1157,44 +1157,60 @@ with tab_upload:
                         # DRAFT BUTTON
                         if st.button("🚀 DRAFT", key=f"g_{img['id']}", type="primary"):
                             with st.spinner("Processing..."):
-                                # LOGIC A: AI GENERATION
-                                if cap_mode == "✨ Create New":
-                                    if u_context: instr = f"MANDATORY: Subject is '{u_context}'."
-                                    else: instr = "Analyze the image."
+                                try:
+                                    # LOGIC A: AI GENERATION
+                                    if cap_mode == "✨ Create New":
+                                        if u_context: instr = f"MANDATORY: Subject is '{u_context}'."
+                                        else: instr = "Analyze the image."
+                                        
+                                        prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {instr} Strategy: {u_strat}. Output: Final caption."
+                                        
+                                        try:
+                                            # Attempt 1: Vision (Look at image)
+                                            resp = openai_client.chat.completions.create(
+                                                model="gpt-4o", 
+                                                messages=[{
+                                                    "role": "user", 
+                                                    "content": [
+                                                        {"type": "text", "text": prompt}, 
+                                                        {"type": "image_url", "image_url": {"url": img['file_url']}}
+                                                    ]
+                                                }]
+                                            )
+                                            final_caption = resp.choices[0].message.content
+                                        except Exception as e:
+                                            # Fallback: Text only (if image link fails)
+                                            st.warning(f"Vision failed ({e}), trying text-only...")
+                                            resp = openai_client.chat.completions.create(
+                                                model="gpt-4o",
+                                                messages=[{"role": "user", "content": prompt}]
+                                            )
+                                            final_caption = resp.choices[0].message.content
+                                        
+                                        topic_tag = u_context if u_context else "AI Auto"
                                     
-                                    prompt = f"Role: Social Lead. Facts: {get_brand_knowledge()} {instr} Strategy: {u_strat}. Output: Final caption."
-                                    
-                                    # --- FIX: Changed model to 'gpt-4o' for Vision support ---
-                                    resp = openai_client.chat.completions.create(
-                                        model="gpt-4o", 
-                                        messages=[{
-                                            "role": "user", 
-                                            "content": [
-                                                {"type": "text", "text": prompt}, 
-                                                {"type": "image_url", "image_url": {"url": img['file_url']}}
-                                            ]
-                                        }]
-                                    )
-                                    final_caption = resp.choices[0].message.content
-                                    topic_tag = u_context if u_context else "AI Auto"
-                                
-                                # LOGIC B: VIRAL TREND
-                                else:
-                                    topic_tag = "Viral Trend"
-                                    # Mark as 'used' so it leaves the list
-                                    if viral_map:
-                                        supabase.table("inspiration_vault").update({"status": "used"}).eq("id", viral_map[sel_trend]['id']).execute()
-                                        st.cache_data.clear()
+                                    # LOGIC B: VIRAL TREND
+                                    else:
+                                        topic_tag = "Viral Trend"
+                                        if viral_map:
+                                            supabase.table("inspiration_vault").update({"status": "used"}).eq("id", viral_map[sel_trend]['id']).execute()
+                                            st.cache_data.clear()
 
-                                # Save Draft
-                                if final_caption:
-                                    supabase.table("social_posts").insert({
-                                        "caption": final_caption, 
-                                        "image_url": img['file_url'], 
-                                        "topic": topic_tag, 
-                                        "status": "draft"
-                                    }).execute()
-                                    st.success("Draft Created!"); st.rerun()
+                                    # Save Draft
+                                    if final_caption:
+                                        supabase.table("social_posts").insert({
+                                            "caption": final_caption, 
+                                            "image_url": img['file_url'], 
+                                            "topic": topic_tag, 
+                                            "status": "draft"
+                                        }).execute()
+                                        st.success("Draft Created!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Generated caption was empty.")
+                                        
+                                except Exception as e:
+                                    st.error(f"Critical Error: {e}")
                         
                         if st.button("🗑️", key=f"d_{img['id']}"): 
                             supabase.table("uploaded_images").delete().eq("id", img['id']).execute(); st.rerun()
@@ -2300,6 +2316,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
