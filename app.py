@@ -598,96 +598,6 @@ def post_comment_reply(comment_id, reply_text):
         return True
     except Exception as e:
         st.error(f"Post Error: {e}"); return False
-        
-# --- FACEBOOK MANAGER LOGIC ---
-def scan_facebook_comments(limit=20):
-    """
-    Scans only posts PUBLISHED by the Page (bypasses Public Content Error #10).
-    """
-    pending_list = []
-    
-    # 1. Load Secrets
-    page_id = st.secrets.get("FACEBOOK_PAGE_ID")
-    token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-    
-    if not page_id or not token:
-        st.error("❌ FB Creds Missing"); return [], 0, 0
-
-    try:
-        # 2. THE FIX: Use '{page_id}/published_posts'
-        # This tells FB: "Only show me posts I wrote." -> No Public Content Permission needed.
-        url = f"https://graph.facebook.com/v19.0/{page_id}/published_posts"
-        
-        params = {
-            "access_token": token,
-            "fields": "message,created_time,comments.summary(true).limit(20){message,from,created_time}",
-            "limit": 10 
-        }
-        
-        r = requests.get(url, params=params)
-        data = r.json()
-        
-        # 3. Error Handling
-        if "error" in data:
-            st.error(f"FB API Error: {data['error']['message']}")
-            # Debug: Print the exact permissions checking this token
-            st.warning("Trying to debug permissions...")
-            debug_r = requests.get(f"https://graph.facebook.com/me/permissions", params={"access_token": token})
-            st.json(debug_r.json())
-            return [], 0, 0
-
-        # 4. Process Posts
-        posts = data.get("data", [])
-        scanned = 0
-        ignored = 0
-        
-        for post in posts:
-            post_msg = post.get("message", "Media Post")
-            
-            if "comments" in post:
-                comments = post["comments"]["data"]
-                scanned += len(comments)
-                
-                for comment in comments:
-                    # Skip your own comments
-                    if comment.get("from", {}).get("id") == page_id:
-                        ignored += 1
-                        continue
-
-                    # Draft Reply
-                    prompt = f"Reply to FB comment: '{comment.get('message')}'. Context: '{post_msg}'. Keep it spooky."
-                    try:
-                        ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
-                    except: ai_reply = "Thanks! 👻"
-
-                    pending_list.append({
-                        "id": comment.get("id"),
-                        "author": comment.get("from", {}).get("name"),
-                        "text": comment.get("message"),
-                        "video": f"FB: {post_msg[:30]}...",
-                        "draft": ai_reply,
-                        "date": comment.get("created_time"),
-                        "platform": "facebook"
-                    })
-
-        pending_list.sort(key=lambda x: x['date'], reverse=True)
-        return pending_list[:limit], scanned, ignored
-
-    except Exception as e:
-        st.error(f"Scan Logic Error: {e}"); return [], 0, 0
-
-def post_facebook_reply(comment_id, reply_text):
-    token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-    if not token: return False
-    
-    try:
-        url = f"https://graph.facebook.com/v19.0/{comment_id}/comments"
-        r = requests.post(url, params={"access_token": token, "message": reply_text})
-        if "id" in r.json(): return True
-        else: 
-            st.error(f"FB Post Error: {r.json()}"); return False
-    except Exception as e:
-        st.error(f"Connection Error: {e}"); return False
 
 def update_youtube_stats():
     """
@@ -1962,69 +1872,80 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
-# --- TAB 7: COMMUNITY MANAGER (FINAL FIX) ---
+# --- TAB 7: COMMUNITY MANAGER ---
 with tab_community:
-    st.subheader("💬 Facebook Community")
+    c_title, c_scan = st.columns([3, 1])
+    with c_title:
+        st.subheader("💬 Community Inbox")
     
-    # 1. SETUP
-    token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-    page_id = st.secrets.get("FACEBOOK_PAGE_ID")
-    
-    if st.button("🔄 SCAN COMMENTS", type="primary"):
-        with st.spinner("Accessing Page Feed..."):
-            try:
-                # TRICK: Don't ask for /feed. Ask for 'me' and include posts as a field.
-                # This often bypasses the Public Content check.
-                url = "https://graph.facebook.com/v19.0/me"
-                params = {
-                    "access_token": token,
-                    "fields": "posts.limit(10){message,created_time,comments.summary(true){message,from,created_time}}"
-                }
+    # Session State
+    if "inbox_comments" not in st.session_state: st.session_state.inbox_comments = []
+    if "scan_stats" not in st.session_state: st.session_state.scan_stats = {"scanned": 0, "ignored": 0}
+
+    with c_scan:
+        # Note: This limit is how many you WANT TO SEE, not how many it scans (it always scans 100 now)
+        scan_qty = st.selectbox("Show Top X Unanswered", [10, 20, 50], index=1, label_visibility="collapsed")
+        
+        if st.button("🔄 SCAN CHANNEL", type="primary", use_container_width=True):
+            with st.spinner("Analyzing last 100 interactions..."):
+                drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
+                st.session_state.inbox_comments = drafts
+                st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
+                st.rerun()
+
+    # --- SHOW STATS ---
+    if st.session_state.scan_stats['scanned'] > 0:
+        s = st.session_state.scan_stats
+        st.caption(f"📊 **Deep Scan Report:** Analyzed last **{s['scanned']}** channel events. Ignored **{s['ignored']}** (already replied/yours). Showing newest **{len(st.session_state.inbox_comments)}** requiring attention.")
+
+    # --- INBOX LOGIC ---
+    if st.session_state.inbox_comments:
+        count = len(st.session_state.inbox_comments)
+        
+        if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
+            progress = st.progress(0)
+            for i, item in enumerate(st.session_state.inbox_comments):
+                final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
+                post_comment_reply(item['id'], final_text)
+                progress.progress((i + 1) / count)
+                import time; time.sleep(1.0)
+            
+            st.session_state.inbox_comments = []
+            st.success("🎉 All replies sent!")
+            st.rerun()
+
+        st.divider()
+
+        for i, item in enumerate(st.session_state.inbox_comments):
+            with st.container(border=True):
+                c_info, c_edit, c_act = st.columns([2, 3, 1])
                 
-                r = requests.get(url, params=params)
-                data = r.json()
-
-                if "error" in data:
-                    st.error(f"❌ API Error: {data['error']['message']}")
-                    st.info("💡 If this fails, try Fix 2 below (Business Manager).")
-                else:
-                    # Success! Parse the nested data
-                    posts = data.get("posts", {}).get("data", [])
-                    st.success(f"✅ Success! Found {len(posts)} posts.")
-                    
-                    for p in posts:
-                        with st.container(border=True):
-                            st.write(f"📝 **Post:** {p.get('message', 'Media/Link Post')}")
-                            comments = p.get("comments", {}).get("data", [])
-                            if comments:
-                                st.write(f"💬 **{len(comments)} Comments:**")
-                                for c in comments:
-                                    # Draft a reply for each
-                                    st.caption(f"👤 {c.get('from', {}).get('name')}: {c.get('message')}")
-                                    if st.button("Reply", key=c['id']):
-                                        # (Add reply logic here later)
-                                        st.toast("Reply feature ready!")
-                            else:
-                                st.caption("No comments found.")
-
-            except Exception as e:
-                st.error(f"Connection Failed: {e}")
-
-    st.divider()
-    with st.expander("❓ Still getting Error #10? Click here."):
-        st.write("""
-        **The 'Business Manager' Block**
-        Since your Page is owned by a Business, you must 'Authorize' this App.
-        
-        1. Go to **[business.facebook.com/settings](https://business.facebook.com/settings)**.
-        2. Select your Business (**MysticFlicks** or **Ghost Dimension**).
-        3. On the left sidebar, click **Integrations** -> **Connected Apps**.
-        4. Click **Add Connected Apps**.
-        5. Select **socialp** (ID: 1695418391421915).
-        6. Click **Add**.
-        
-        **Then try scanning again!**
-        """)
+                with c_info:
+                    st.markdown(f"**👤 {item['author']}**")
+                    st.caption(f" on: *{item['video']}*")
+                    st.info(f"\"{item['text']}\"")
+                    # Show date to confirm sorting works
+                    st.caption(f"📅 {item['date'][:10]} {item['date'][11:16]}")
+                
+                with c_edit:
+                    new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
+                
+                with c_act:
+                    st.write("") 
+                    if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
+                        if post_comment_reply(item['id'], new_draft):
+                            st.toast(f"Replied to {item['author']}!")
+                            st.session_state.inbox_comments.pop(i)
+                            st.rerun()
+                            
+                    if st.button("🗑️ Ignore", key=f"btn_del_{item['id']}", use_container_width=True):
+                        st.session_state.inbox_comments.pop(i)
+                        st.rerun()
+    else:
+        if st.session_state.scan_stats['scanned'] > 0:
+            st.success("🎉 You are all caught up! No unanswered comments found in the last 100 events.")
+        else:
+            st.info("👋 Click SCAN to check your channel.")
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2418,14 +2339,6 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
-
-
-
-
-
-
-
-
 
 
 
