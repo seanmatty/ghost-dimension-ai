@@ -1962,103 +1962,78 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
-# --- TAB 7: COMMUNITY MANAGER (FACEBOOK FIXED) ---
+# --- TAB 7: COMMUNITY MANAGER (AUTO-FIX) ---
 with tab_community:
-    c_title, c_scan = st.columns([3, 1])
-    with c_title:
-        st.subheader("💬 Community Inbox")
+    st.subheader("💬 Facebook Fixer")
     
-    # Session State
-    if "inbox_comments" not in st.session_state: st.session_state.inbox_comments = []
-    if "scan_stats" not in st.session_state: st.session_state.scan_stats = {"scanned": 0, "ignored": 0}
-    if "comm_platform" not in st.session_state: st.session_state.comm_platform = "YouTube"
-
-    with c_scan:
-        platform = st.selectbox("Platform", ["YouTube", "Facebook"], index=0, label_visibility="collapsed")
-        st.session_state.comm_platform = platform
-        scan_qty = st.selectbox("Depth", [10, 20, 50], index=1, label_visibility="collapsed")
-        
-        if st.button(f"🔄 SCAN {platform.upper()}", type="primary", use_container_width=True):
-            st.session_state.inbox_comments = [] # Clear old
-            with st.spinner(f"Connecting to {platform}..."):
-                if platform == "YouTube":
-                    drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
-                else:
-                    drafts, sc, ig = scan_facebook_comments(limit=scan_qty)
+    # 1. READ SECRETS
+    token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
+    current_id_in_secrets = st.secrets.get("FACEBOOK_PAGE_ID")
+    
+    # 2. AUTO-DETECT REAL ID FROM TOKEN
+    if token:
+        try:
+            # Ask FB: "Who does this token belong to?"
+            me_r = requests.get("https://graph.facebook.com/me", params={"access_token": token, "fields": "id,name"})
+            
+            if me_r.status_code == 200:
+                real_page_data = me_r.json()
+                real_id = real_page_data.get("id")
+                real_name = real_page_data.get("name")
                 
-                st.session_state.inbox_comments = drafts
-                st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
-                st.rerun()
-
-   # --- DEBUG SECTION ---
-    with st.expander("🛠️ DEBUG: Connection Test"):
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🆔 Identity"):
-                token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-                r = requests.get("https://graph.facebook.com/me", params={"access_token": token, "fields": "id,name"})
-                if r.status_code == 200:
-                    st.success(f"✅ Verified: {r.json().get('name')}")
-                else: st.error(r.text)
-
-        with c2:
-            if st.button("📡 Check Posts (Not Feed)"):
-                token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-                # CHANGED: 'me/feed' -> 'me/posts'
-                url = "https://graph.facebook.com/v19.0/me/posts"
-                params = {
-                    "access_token": token,
-                    "limit": 3,
-                    "fields": "message,created_time,comments.summary(true)"
-                }
-                r = requests.get(url, params=params)
+                # CHECK MISMATCH
+                if str(real_id) != str(current_id_in_secrets):
+                    st.error("⚠️ MISMATCH DETECTED!")
+                    st.markdown(f"""
+                    **Your Token belongs to:** `{real_name}` (ID: `{real_id}`)
+                    **But your Secrets file has:** `{current_id_in_secrets}`
+                    
+                    **👇 ACTION REQUIRED:**
+                    Go to `.streamlit/secrets.toml` and change `FACEBOOK_PAGE_ID` to:
+                    """)
+                    st.code(f'FACEBOOK_PAGE_ID = "{real_id}"', language="toml")
+                    st.warning("Update the file, Save, and Restart this app.")
+                    st.stop() # Stop here until fixed
                 
-                if r.status_code == 200:
-                    st.success("✅ ACCESS GRANTED!")
-                    st.write(f"Found {len(r.json().get('data', []))} posts.")
-                    st.json(r.json())
                 else:
-                    st.error("❌ Blocked.")
-                    st.error(r.text)
+                    st.success(f"✅ Configuration Perfect! Connected to: {real_name} ({real_id})")
+                    
+                    # 3. IF MATCHED, RUN THE SCANNER
+                    if st.button("🔄 SCAN FACEBOOK COMMENTS", type="primary"):
+                        # Use the Safe Endpoint
+                        url = f"https://graph.facebook.com/v19.0/{real_id}/published_posts"
+                        params = {
+                            "access_token": token,
+                            "fields": "message,created_time,comments.summary(true).limit(20){message,from,created_time}",
+                            "limit": 10
+                        }
+                        r = requests.get(url, params=params)
+                        data = r.json()
+                        
+                        if "error" in data:
+                            st.error(f"API Error: {data['error']['message']}")
+                        else:
+                            posts = data.get("data", [])
+                            st.write(f"Found {len(posts)} recent posts.")
+                            
+                            for p in posts:
+                                st.markdown("---")
+                                st.write(f"📝 **{p.get('message', 'Media Post')}**")
+                                comments = p.get("comments", {}).get("data", [])
+                                if comments:
+                                    for c in comments:
+                                        st.info(f"👤 {c.get('from', {}).get('name')}: {c.get('message')}")
+                                else:
+                                    st.caption("No comments yet.")
 
-    # --- INBOX DISPLAY ---
-    if st.session_state.scan_stats['scanned'] > 0:
-        s = st.session_state.scan_stats
-        st.caption(f"📊 Report: Scanned **{s['scanned']}** items. Ignored **{s['ignored']}**. Inbox: **{len(st.session_state.inbox_comments)}**.")
+            else:
+                st.error("❌ Token Invalid or Expired. Please generate a new Page Token.")
+                st.write(me_r.json())
 
-    if st.session_state.inbox_comments:
-        count = len(st.session_state.inbox_comments)
-        if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
-            progress = st.progress(0)
-            for i, item in enumerate(st.session_state.inbox_comments):
-                final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
-                if item.get('platform') == 'facebook':
-                    post_facebook_reply(item['id'], final_text)
-                else:
-                    post_comment_reply(item['id'], final_text)
-                progress.progress((i + 1) / count)
-                import time; time.sleep(1.0)
-            st.session_state.inbox_comments = []
-            st.success("🎉 Done!"); st.rerun()
-
-        st.divider()
-        for i, item in enumerate(st.session_state.inbox_comments):
-            with st.container(border=True):
-                c_info, c_edit, c_act = st.columns([2, 3, 1])
-                with c_info:
-                    icon = "📘" if item.get('platform') == 'facebook' else "🟥"
-                    st.markdown(f"**{icon} {item['author']}**")
-                    st.caption(f"Post: *{item['video']}*")
-                    st.info(f"\"{item['text']}\"")
-                with c_edit:
-                    new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}", height=100)
-                with c_act:
-                    st.write("")
-                    if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
-                        success = post_facebook_reply(item['id'], new_draft) if item.get('platform') == 'facebook' else post_comment_reply(item['id'], new_draft)
-                        if success:
-                            st.toast("Sent!")
-                            st.session_state.inbox_comments.pop(i); st.rerun()
+        except Exception as e:
+            st.error(f"Connection Failed: {e}")
+    else:
+        st.error("Please add FACEBOOK_ACCESS_TOKEN to secrets.toml")
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2452,6 +2427,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
