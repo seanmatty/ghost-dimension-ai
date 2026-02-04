@@ -2013,14 +2013,16 @@ with tab_community:
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
                 
-# --- DEBUG BUTTON (Remove later) ---
+# --- DEBUG BUTTON (Universal 'Me' Fix) ---
         with st.expander("🛠️ DEBUG: Show Raw Facebook Data"):
             if st.button("🔍 X-Ray Facebook Feed"):
-                page_id = st.secrets.get("FACEBOOK_PAGE_ID")
+                # We only need the token now, we will ignore the ID to be safe
                 token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
                 
-                # 1. Test Connection
-                url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+                # Use 'me' instead of page_id. 
+                # Since it's a Page Token, 'me' = Ghost Dimension Page.
+                url = "https://graph.facebook.com/v19.0/me/feed"
+                
                 params = {
                     "access_token": token,
                     "fields": "message,created_time,comments.summary(true).limit(5)",
@@ -2028,25 +2030,30 @@ with tab_community:
                 }
                 r = requests.get(url, params=params)
                 
-                # 2. Show Results
+                # Show Results
+                st.write(f"**Target:** {url}")
                 st.write(f"**Status Code:** {r.status_code}")
+                
                 if r.status_code != 200:
                     st.error(f"Error: {r.text}")
                 else:
                     data = r.json().get("data", [])
-                    st.write(f"**Found {len(data)} Posts.**")
+                    st.success(f"✅ Success! Found {len(data)} Posts.")
                     for p in data:
                         st.markdown(f"---")
                         st.write(f"📝 **Post:** {p.get('message', 'No Text')}")
                         st.write(f"📅 **Date:** {p.get('created_time')}")
                         
-                        comments = p.get('comments', {}).get('data', [])
-                        st.write(f"💬 **Comments Found:** {len(comments)}")
+                        # Check comments
+                        comments_summary = p.get('comments', {}).get('summary', {})
+                        total_count = comments_summary.get('total_count', 0)
                         
-                        if comments:
-                            st.json(comments) # Show exact structure of comments
-                        else:
-                            st.warning("No comments in API response for this post.")
+                        st.write(f"💬 **Total Comments:** {total_count}")
+                        
+                        comments_data = p.get('comments', {}).get('data', [])
+                        if comments_data:
+                            for c in comments_data:
+                                st.caption(f"- {c.get('from', {}).get('name')}: {c.get('message')}")
     # --- SHOW STATS ---
     if st.session_state.scan_stats['scanned'] > 0:
         s = st.session_state.scan_stats
@@ -2505,6 +2512,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
