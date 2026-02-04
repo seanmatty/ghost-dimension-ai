@@ -602,100 +602,79 @@ def post_comment_reply(comment_id, reply_text):
 # --- FACEBOOK MANAGER LOGIC ---
 def scan_facebook_comments(limit=20):
     """
-    Scans Facebook Page for unanswered comments on recent posts.
+    Scans only posts PUBLISHED by the Page (bypasses Public Content Error #10).
     """
     pending_list = []
-    scanned = 0
-    ignored = 0
     
-    # Check for secrets
+    # 1. Load Secrets
     page_id = st.secrets.get("FACEBOOK_PAGE_ID")
     token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
     
     if not page_id or not token:
-        st.error("❌ Missing FACEBOOK_PAGE_ID or FACEBOOK_ACCESS_TOKEN in secrets.")
-        return [], 0, 0
+        st.error("❌ FB Creds Missing"); return [], 0, 0
 
     try:
-        # 1. Get recent posts from the Feed
-        url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+        # 2. THE FIX: Use '{page_id}/published_posts'
+        # This tells FB: "Only show me posts I wrote." -> No Public Content Permission needed.
+        url = f"https://graph.facebook.com/v19.0/{page_id}/published_posts"
+        
         params = {
             "access_token": token,
-            "fields": "message,created_time,comments.summary(true).limit(20){message,from,created_time,comment_count}",
-            "limit": 10 # Check last 10 posts
+            "fields": "message,created_time,comments.summary(true).limit(20){message,from,created_time}",
+            "limit": 10 
         }
         
         r = requests.get(url, params=params)
         data = r.json()
         
+        # 3. Error Handling
         if "error" in data:
-            st.error(f"FB Error: {data['error']['message']}")
+            st.error(f"FB API Error: {data['error']['message']}")
+            # Debug: Print the exact permissions checking this token
+            st.warning("Trying to debug permissions...")
+            debug_r = requests.get(f"https://graph.facebook.com/me/permissions", params={"access_token": token})
+            st.json(debug_r.json())
             return [], 0, 0
 
+        # 4. Process Posts
         posts = data.get("data", [])
+        scanned = 0
+        ignored = 0
         
         for post in posts:
-            post_message = post.get("message", "Image/Video Post")
-            post_id = post.get("id")
+            post_msg = post.get("message", "Media Post")
             
-            # Check if post has comments
             if "comments" in post:
                 comments = post["comments"]["data"]
                 scanned += len(comments)
                 
                 for comment in comments:
-                    c_id = comment.get("id")
-                    c_text = comment.get("message")
-                    c_author = comment.get("from", {}).get("name", "Unknown")
-                    c_author_id = comment.get("from", {}).get("id")
-                    c_time = comment.get("created_time")
-                    
-                    # SKIP LOGIC
-                    # If author is the Page itself (You)
-                    if c_author_id == page_id: 
+                    # Skip your own comments
+                    if comment.get("from", {}).get("id") == page_id:
                         ignored += 1
                         continue
 
-                    # Ideally check replies, but FB basic API doesn't nest deeply easily.
-                    # For V1, we assume if you haven't replied to the parent, it's open.
-                    
-                    # Generate AI Draft
-                    prompt = f"""
-                    You are the community manager for 'Ghost Dimension' on Facebook.
-                    Viewer Comment: "{c_text}"
-                    Context: They commented on a post saying: "{post_message}"
-                    
-                    TASK: Write a short, engaging Facebook reply (Max 2 sentences).
-                    STRATEGIES:
-                    1. SOCIAL: Reply warmly. "Thanks for following! 👻"
-                    2. QUESTION: Answer if possible, or say "Great question!"
-                    3. SKEPTIC: "We stand by our evidence 100%."
-                    
-                    IMPORTANT: Output ONLY the final reply text.
-                    """
-                    
+                    # Draft Reply
+                    prompt = f"Reply to FB comment: '{comment.get('message')}'. Context: '{post_msg}'. Keep it spooky."
                     try:
-                        response = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-                        draft = response.text.replace("Reply:", "").strip().replace('"', '')
-                        
-                        pending_list.append({
-                            "id": c_id,
-                            "author": c_author,
-                            "text": c_text,
-                            "video": f"FB Post: {post_message[:30]}...", # Reusing 'video' key for UI compatibility
-                            "draft": draft,
-                            "date": c_time,
-                            "platform": "facebook"
-                        })
-                    except: pass
-        
-        # Sort by date
+                        ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
+                    except: ai_reply = "Thanks! 👻"
+
+                    pending_list.append({
+                        "id": comment.get("id"),
+                        "author": comment.get("from", {}).get("name"),
+                        "text": comment.get("message"),
+                        "video": f"FB: {post_msg[:30]}...",
+                        "draft": ai_reply,
+                        "date": comment.get("created_time"),
+                        "platform": "facebook"
+                    })
+
         pending_list.sort(key=lambda x: x['date'], reverse=True)
         return pending_list[:limit], scanned, ignored
 
     except Exception as e:
-        st.error(f"FB Scan Error: {e}")
-        return [], 0, 0
+        st.error(f"Scan Logic Error: {e}"); return [], 0, 0
 
 def post_facebook_reply(comment_id, reply_text):
     token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
@@ -2473,6 +2452,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
