@@ -2011,28 +2011,35 @@ with tab_community:
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
 
-    # --- DEBUG SECTION ---
-    with st.expander("🛠️ DEBUG: Test Connection"):
+   # --- DEBUG SECTION ---
+    with st.expander("🛠️ DEBUG: Connection Test"):
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("🆔 Check Identity"):
-                # Simple check that works for Pages
+            if st.button("🆔 Identity"):
                 token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
                 r = requests.get("https://graph.facebook.com/me", params={"access_token": token, "fields": "id,name"})
                 if r.status_code == 200:
-                    st.success(f"✅ Verified: {r.json().get('name')} (ID: {r.json().get('id')})")
-                else:
-                    st.error(r.text)
+                    st.success(f"✅ Verified: {r.json().get('name')}")
+                else: st.error(r.text)
+
         with c2:
-            if st.button("📡 Check Feed Permissions"):
-                # The real test
+            if st.button("📡 Check Posts (Not Feed)"):
                 token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-                r = requests.get("https://graph.facebook.com/v19.0/me/feed", params={"access_token": token, "limit": 1})
+                # CHANGED: 'me/feed' -> 'me/posts'
+                url = "https://graph.facebook.com/v19.0/me/posts"
+                params = {
+                    "access_token": token,
+                    "limit": 3,
+                    "fields": "message,created_time,comments.summary(true)"
+                }
+                r = requests.get(url, params=params)
+                
                 if r.status_code == 200:
-                    st.success("✅ Feed Access GRANTED!")
+                    st.success("✅ ACCESS GRANTED!")
+                    st.write(f"Found {len(r.json().get('data', []))} posts.")
                     st.json(r.json())
                 else:
-                    st.error("❌ Feed Access BLOCKED. (Did you switch to Dev Mode?)")
+                    st.error("❌ Blocked.")
                     st.error(r.text)
 
     # --- INBOX DISPLAY ---
@@ -2466,6 +2473,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
