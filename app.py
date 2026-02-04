@@ -2013,47 +2013,26 @@ with tab_community:
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
                 
-# --- DEBUG BUTTON (Universal 'Me' Fix) ---
-        with st.expander("🛠️ DEBUG: Show Raw Facebook Data"):
-            if st.button("🔍 X-Ray Facebook Feed"):
-                # We only need the token now, we will ignore the ID to be safe
+# --- DEBUG: IDENTITY CHECK ---
+        with st.expander("🛠️ DEBUG: Identity Check"):
+            if st.button("🆔 Who am I?"):
                 token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
                 
-                # Use 'me' instead of page_id. 
-                # Since it's a Page Token, 'me' = Ghost Dimension Page.
-                url = "https://graph.facebook.com/v19.0/me/feed"
+                # Ask FB for the name of the token owner
+                url = "https://graph.facebook.com/me"
+                r = requests.get(url, params={"access_token": token, "fields": "id,name,accounts"})
                 
-                params = {
-                    "access_token": token,
-                    "fields": "message,created_time,comments.summary(true).limit(5)",
-                    "limit": 5
-                }
-                r = requests.get(url, params=params)
+                st.write(f"**Status:** {r.status_code}")
+                st.json(r.json())
                 
-                # Show Results
-                st.write(f"**Target:** {url}")
-                st.write(f"**Status Code:** {r.status_code}")
-                
-                if r.status_code != 200:
-                    st.error(f"Error: {r.text}")
-                else:
-                    data = r.json().get("data", [])
-                    st.success(f"✅ Success! Found {len(data)} Posts.")
-                    for p in data:
-                        st.markdown(f"---")
-                        st.write(f"📝 **Post:** {p.get('message', 'No Text')}")
-                        st.write(f"📅 **Date:** {p.get('created_time')}")
-                        
-                        # Check comments
-                        comments_summary = p.get('comments', {}).get('summary', {})
-                        total_count = comments_summary.get('total_count', 0)
-                        
-                        st.write(f"💬 **Total Comments:** {total_count}")
-                        
-                        comments_data = p.get('comments', {}).get('data', [])
-                        if comments_data:
-                            for c in comments_data:
-                                st.caption(f"- {c.get('from', {}).get('name')}: {c.get('message')}")
+                if r.status_code == 200:
+                    data = r.json()
+                    st.success(f"You are logged in as: **{data.get('name')}**")
+                    if "accounts" in data:
+                        st.warning("⚠️ YOU ARE USING A USER TOKEN (Sean), NOT A PAGE TOKEN!")
+                        st.write("You need to generate a token specifically for the Page 'Ghost Dimension'.")
+                    else:
+                        st.success("✅ Good! This looks like a Page Token (No 'accounts' list visible).")
     # --- SHOW STATS ---
     if st.session_state.scan_stats['scanned'] > 0:
         s = st.session_state.scan_stats
@@ -2512,6 +2491,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
