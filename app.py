@@ -1983,7 +1983,7 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
-# --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM) ---
+# --- TAB 7: COMMUNITY MANAGER (FACEBOOK FIXED) ---
 with tab_community:
     c_title, c_scan = st.columns([3, 1])
     with c_title:
@@ -1995,10 +1995,8 @@ with tab_community:
     if "comm_platform" not in st.session_state: st.session_state.comm_platform = "YouTube"
 
     with c_scan:
-        # Platform Toggle
         platform = st.selectbox("Platform", ["YouTube", "Facebook"], index=0, label_visibility="collapsed")
         st.session_state.comm_platform = platform
-        
         scan_qty = st.selectbox("Depth", [10, 20, 50], index=1, label_visibility="collapsed")
         
         if st.button(f"🔄 SCAN {platform.upper()}", type="primary", use_container_width=True):
@@ -2012,92 +2010,69 @@ with tab_community:
                 st.session_state.inbox_comments = drafts
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
-                
-# --- DEBUG: IDENTITY CHECK ---
-        with st.expander("🛠️ DEBUG: Identity Check"):
-            if st.button("🆔 Who am I?"):
+
+    # --- DEBUG SECTION ---
+    with st.expander("🛠️ DEBUG: Test Connection"):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🆔 Check Identity"):
+                # Simple check that works for Pages
                 token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-                
-                # Ask FB for the name of the token owner
-                url = "https://graph.facebook.com/me"
-                r = requests.get(url, params={"access_token": token, "fields": "id,name,accounts"})
-                
-                st.write(f"**Status:** {r.status_code}")
-                st.json(r.json())
-                
+                r = requests.get("https://graph.facebook.com/me", params={"access_token": token, "fields": "id,name"})
                 if r.status_code == 200:
-                    data = r.json()
-                    st.success(f"You are logged in as: **{data.get('name')}**")
-                    if "accounts" in data:
-                        st.warning("⚠️ YOU ARE USING A USER TOKEN (Sean), NOT A PAGE TOKEN!")
-                        st.write("You need to generate a token specifically for the Page 'Ghost Dimension'.")
-                    else:
-                        st.success("✅ Good! This looks like a Page Token (No 'accounts' list visible).")
-    # --- SHOW STATS ---
+                    st.success(f"✅ Verified: {r.json().get('name')} (ID: {r.json().get('id')})")
+                else:
+                    st.error(r.text)
+        with c2:
+            if st.button("📡 Check Feed Permissions"):
+                # The real test
+                token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
+                r = requests.get("https://graph.facebook.com/v19.0/me/feed", params={"access_token": token, "limit": 1})
+                if r.status_code == 200:
+                    st.success("✅ Feed Access GRANTED!")
+                    st.json(r.json())
+                else:
+                    st.error("❌ Feed Access BLOCKED. (Did you switch to Dev Mode?)")
+                    st.error(r.text)
+
+    # --- INBOX DISPLAY ---
     if st.session_state.scan_stats['scanned'] > 0:
         s = st.session_state.scan_stats
-        st.caption(f"📊 Report: Analyzed **{s['scanned']}** items on {st.session_state.comm_platform}. Ignored **{s['ignored']}**. Actionable: **{len(st.session_state.inbox_comments)}**.")
+        st.caption(f"📊 Report: Scanned **{s['scanned']}** items. Ignored **{s['ignored']}**. Inbox: **{len(st.session_state.inbox_comments)}**.")
 
-    # --- INBOX LOGIC ---
     if st.session_state.inbox_comments:
         count = len(st.session_state.inbox_comments)
-        
         if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
             progress = st.progress(0)
             for i, item in enumerate(st.session_state.inbox_comments):
                 final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
-                
-                # Dynamic Sender based on platform
                 if item.get('platform') == 'facebook':
                     post_facebook_reply(item['id'], final_text)
                 else:
                     post_comment_reply(item['id'], final_text)
-                    
                 progress.progress((i + 1) / count)
                 import time; time.sleep(1.0)
-            
             st.session_state.inbox_comments = []
-            st.success("🎉 All replies sent!")
-            st.rerun()
+            st.success("🎉 Done!"); st.rerun()
 
         st.divider()
-
         for i, item in enumerate(st.session_state.inbox_comments):
             with st.container(border=True):
                 c_info, c_edit, c_act = st.columns([2, 3, 1])
-                
                 with c_info:
                     icon = "📘" if item.get('platform') == 'facebook' else "🟥"
                     st.markdown(f"**{icon} {item['author']}**")
-                    st.caption(f"Context: *{item['video']}*")
+                    st.caption(f"Post: *{item['video']}*")
                     st.info(f"\"{item['text']}\"")
-                    st.caption(f"📅 {item.get('date', '')[:10]}")
-                
                 with c_edit:
-                    new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
-                
+                    new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}", height=100)
                 with c_act:
-                    st.write("") 
+                    st.write("")
                     if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
-                        success = False
-                        if item.get('platform') == 'facebook':
-                            success = post_facebook_reply(item['id'], new_draft)
-                        else:
-                            success = post_comment_reply(item['id'], new_draft)
-                            
+                        success = post_facebook_reply(item['id'], new_draft) if item.get('platform') == 'facebook' else post_comment_reply(item['id'], new_draft)
                         if success:
-                            st.toast(f"Replied to {item['author']}!")
-                            st.session_state.inbox_comments.pop(i)
-                            st.rerun()
-                            
-                    if st.button("🗑️ Ignore", key=f"btn_del_{item['id']}", use_container_width=True):
-                        st.session_state.inbox_comments.pop(i)
-                        st.rerun()
-    else:
-        if st.session_state.scan_stats['scanned'] > 0:
-            st.success("🎉 All caught up!")
-        else:
-            st.info(f"👋 Select 'YouTube' or 'Facebook' and click SCAN.")
+                            st.toast("Sent!")
+                            st.session_state.inbox_comments.pop(i); st.rerun()
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2491,6 +2466,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
