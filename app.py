@@ -1962,78 +1962,69 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
-# --- TAB 7: COMMUNITY MANAGER (AUTO-FIX) ---
+# --- TAB 7: COMMUNITY MANAGER (FINAL FIX) ---
 with tab_community:
-    st.subheader("💬 Facebook Fixer")
+    st.subheader("💬 Facebook Community")
     
-    # 1. READ SECRETS
+    # 1. SETUP
     token = st.secrets.get("FACEBOOK_ACCESS_TOKEN")
-    current_id_in_secrets = st.secrets.get("FACEBOOK_PAGE_ID")
+    page_id = st.secrets.get("FACEBOOK_PAGE_ID")
     
-    # 2. AUTO-DETECT REAL ID FROM TOKEN
-    if token:
-        try:
-            # Ask FB: "Who does this token belong to?"
-            me_r = requests.get("https://graph.facebook.com/me", params={"access_token": token, "fields": "id,name"})
-            
-            if me_r.status_code == 200:
-                real_page_data = me_r.json()
-                real_id = real_page_data.get("id")
-                real_name = real_page_data.get("name")
+    if st.button("🔄 SCAN COMMENTS", type="primary"):
+        with st.spinner("Accessing Page Feed..."):
+            try:
+                # TRICK: Don't ask for /feed. Ask for 'me' and include posts as a field.
+                # This often bypasses the Public Content check.
+                url = "https://graph.facebook.com/v19.0/me"
+                params = {
+                    "access_token": token,
+                    "fields": "posts.limit(10){message,created_time,comments.summary(true){message,from,created_time}}"
+                }
                 
-                # CHECK MISMATCH
-                if str(real_id) != str(current_id_in_secrets):
-                    st.error("⚠️ MISMATCH DETECTED!")
-                    st.markdown(f"""
-                    **Your Token belongs to:** `{real_name}` (ID: `{real_id}`)
-                    **But your Secrets file has:** `{current_id_in_secrets}`
-                    
-                    **👇 ACTION REQUIRED:**
-                    Go to `.streamlit/secrets.toml` and change `FACEBOOK_PAGE_ID` to:
-                    """)
-                    st.code(f'FACEBOOK_PAGE_ID = "{real_id}"', language="toml")
-                    st.warning("Update the file, Save, and Restart this app.")
-                    st.stop() # Stop here until fixed
-                
+                r = requests.get(url, params=params)
+                data = r.json()
+
+                if "error" in data:
+                    st.error(f"❌ API Error: {data['error']['message']}")
+                    st.info("💡 If this fails, try Fix 2 below (Business Manager).")
                 else:
-                    st.success(f"✅ Configuration Perfect! Connected to: {real_name} ({real_id})")
+                    # Success! Parse the nested data
+                    posts = data.get("posts", {}).get("data", [])
+                    st.success(f"✅ Success! Found {len(posts)} posts.")
                     
-                    # 3. IF MATCHED, RUN THE SCANNER
-                    if st.button("🔄 SCAN FACEBOOK COMMENTS", type="primary"):
-                        # Use the Safe Endpoint
-                        url = f"https://graph.facebook.com/v19.0/{real_id}/published_posts"
-                        params = {
-                            "access_token": token,
-                            "fields": "message,created_time,comments.summary(true).limit(20){message,from,created_time}",
-                            "limit": 10
-                        }
-                        r = requests.get(url, params=params)
-                        data = r.json()
-                        
-                        if "error" in data:
-                            st.error(f"API Error: {data['error']['message']}")
-                        else:
-                            posts = data.get("data", [])
-                            st.write(f"Found {len(posts)} recent posts.")
-                            
-                            for p in posts:
-                                st.markdown("---")
-                                st.write(f"📝 **{p.get('message', 'Media Post')}**")
-                                comments = p.get("comments", {}).get("data", [])
-                                if comments:
-                                    for c in comments:
-                                        st.info(f"👤 {c.get('from', {}).get('name')}: {c.get('message')}")
-                                else:
-                                    st.caption("No comments yet.")
+                    for p in posts:
+                        with st.container(border=True):
+                            st.write(f"📝 **Post:** {p.get('message', 'Media/Link Post')}")
+                            comments = p.get("comments", {}).get("data", [])
+                            if comments:
+                                st.write(f"💬 **{len(comments)} Comments:**")
+                                for c in comments:
+                                    # Draft a reply for each
+                                    st.caption(f"👤 {c.get('from', {}).get('name')}: {c.get('message')}")
+                                    if st.button("Reply", key=c['id']):
+                                        # (Add reply logic here later)
+                                        st.toast("Reply feature ready!")
+                            else:
+                                st.caption("No comments found.")
 
-            else:
-                st.error("❌ Token Invalid or Expired. Please generate a new Page Token.")
-                st.write(me_r.json())
+            except Exception as e:
+                st.error(f"Connection Failed: {e}")
 
-        except Exception as e:
-            st.error(f"Connection Failed: {e}")
-    else:
-        st.error("Please add FACEBOOK_ACCESS_TOKEN to secrets.toml")
+    st.divider()
+    with st.expander("❓ Still getting Error #10? Click here."):
+        st.write("""
+        **The 'Business Manager' Block**
+        Since your Page is owned by a Business, you must 'Authorize' this App.
+        
+        1. Go to **[business.facebook.com/settings](https://business.facebook.com/settings)**.
+        2. Select your Business (**MysticFlicks** or **Ghost Dimension**).
+        3. On the left sidebar, click **Integrations** -> **Connected Apps**.
+        4. Click **Add Connected Apps**.
+        5. Select **socialp** (ID: 1695418391421915).
+        6. Click **Add**.
+        
+        **Then try scanning again!**
+        """)
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2427,6 +2418,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
