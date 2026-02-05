@@ -1888,44 +1888,38 @@ def clean_make_json(text_response):
             return {"data": []}
 
 def scan_instagram_comments(limit=20):
-    """Hits Make.com -> Gets IG Comments -> Returns formatted list"""
     url = st.secrets.get("MAKE_WEBHOOK_IG_SCAN")
     if not url: 
-        st.error("❌ Missing MAKE_WEBHOOK_IG_SCAN in secrets.toml")
+        st.error("❌ Missing MAKE_WEBHOOK_IG_SCAN")
         return [], 0, 0
 
     try:
-        # 1. Ask Make for data
+        # 1. Get the "Ignore List" from DB
+        handled_ids = get_instagram_handled_ids() # <--- NEW
+
+        # 2. Get Data from Make
         response = requests.post(url, json={"limit": limit})
-        
-        # 2. Clean JSON
         data = clean_make_json(response.text)
         comments = data.get("data", [])
         
         pending_list = []
         for c in comments:
-            # --- 👻 GHOST BUSTER FILTER ---
-            # 1. Check if it's a real dictionary
-            if not isinstance(c, dict): 
-                continue
-            
-            # 2. Check if 'text' exists and is not empty/whitespace
+            # Ghost Buster
+            if not isinstance(c, dict): continue
             raw_text = c.get("text", "")
-            if not raw_text or str(raw_text).strip() == "": 
-                continue
-
-            # 3. Check if 'author' exists
             author_name = c.get("author", "")
-            if not author_name or str(author_name).strip() == "":
-                continue
-            # ------------------------------
-            
-            # AI Draft Logic
-            prompt = f"Reply to Instagram comment: '{raw_text}'. Context: Paranormal TV Show. Keep it short & spooky."
+            if not raw_text or str(raw_text).strip() == "" or not author_name: continue
+
+            # --- MEMORY CHECK (INSTAGRAM ONLY) ---
+            if c.get("id") in handled_ids: 
+                continue 
+            # -------------------------------------
+
+            # AI Draft
+            prompt = f"Reply to: '{raw_text}'. Context: Ghost Dimension. Short & Spooky."
             try:
                 ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
-            except: 
-                ai_reply = "Thanks for watching! 👻"
+            except: ai_reply = "Thanks! 👻"
 
             pending_list.append({
                 "id": c.get("id"),
@@ -1940,8 +1934,7 @@ def scan_instagram_comments(limit=20):
         return pending_list, len(comments), 0
 
     except Exception as e:
-        st.error(f"IG Scan Error: {e}")
-        return [], 0, 0
+        st.error(f"IG Error: {e}"); return [], 0, 0
 
 def post_instagram_reply(comment_id, reply_text):
     """Sends reply back to Make.com"""
@@ -1955,6 +1948,25 @@ def post_instagram_reply(comment_id, reply_text):
         return True
     except:
         return False
+
+# --- INSTAGRAM MEMORY SYSTEM ---
+def get_instagram_handled_ids():
+    """Fetches list of IG comment IDs we have already processed."""
+    try:
+        response = supabase.table("instagram_logs").select("comment_id").execute()
+        return {row['comment_id'] for row in response.data}
+    except:
+        return set()
+
+def mark_instagram_handled(comment_id, action="replied"):
+    """Logs an ID to Supabase so it vanishes from the list."""
+    try:
+        supabase.table("instagram_logs").insert({
+            "comment_id": comment_id,
+            "action": action
+        }).execute()
+    except Exception as e:
+        st.error(f"Log Error: {e}")
 
 # --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM & CRASH PROOF) ---
 with tab_community:
@@ -2010,6 +2022,7 @@ with tab_community:
                 # Route to correct function
                 if item.get('platform') == 'instagram':
                     post_instagram_reply(item['id'], final_text)
+                    mark_instagram_handled(item['id'], "replied") # <--- NEW LOGGING
                 else:
                     post_comment_reply(item['id'], final_text)
                     
@@ -2030,22 +2043,25 @@ with tab_community:
                     # Platform Icon
                     icon = "📸" if item.get('platform') == 'instagram' else "🟥"
                     st.markdown(f"**{icon} {item['author']}**")
-                    video_title = item.get('video', 'Post')[:40] + "..." if len(item.get('video', '')) > 40 else item.get('video', 'Post')
+                    # Handle varying caption lengths safely
+                    vid_txt = item.get('video', 'Post')
+                    video_title = vid_txt[:40] + "..." if len(vid_txt) > 40 else vid_txt
                     st.caption(f"Post: *{video_title}*")
                     st.info(f"\"{item['text']}\"")
                 
                 with c_edit:
-                    # FIX: Added _{i} to the key to guarantee uniqueness
+                    # Keep your Unique Key fix
                     new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}_{i}", height=100)
                 
                 with c_act:
                     st.write("")
-                    # FIX: Added _{i} to button keys too
+                    # Keep Unique Key fix
                     if st.button("✅ Send", key=f"btn_send_{item['id']}_{i}", use_container_width=True):
                         # Route Single Reply
                         success = False
                         if item.get('platform') == 'instagram':
                             success = post_instagram_reply(item['id'], new_draft)
+                            if success: mark_instagram_handled(item['id'], "replied") # <--- NEW LOGGING
                         else:
                             success = post_comment_reply(item['id'], new_draft)
                             
@@ -2056,6 +2072,10 @@ with tab_community:
                             st.error("Failed")
                     
                     if st.button("🗑️ Ignore", key=f"btn_ign_{item['id']}_{i}", use_container_width=True):
+                         # Log Ignore only for Insta
+                         if item.get('platform') == 'instagram':
+                             mark_instagram_handled(item['id'], "ignored") # <--- NEW LOGGING
+                         
                          st.session_state.inbox_comments.pop(i); st.rerun()
     else:
         st.info(f"👋 Ready to scan {st.session_state.comm_platform}.")
@@ -2452,6 +2472,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
