@@ -1943,7 +1943,7 @@ def post_instagram_reply(comment_id, reply_text):
     except:
         return False
 
-# --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM) ---
+# --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM & CRASH PROOF) ---
 with tab_community:
     c_title, c_scan = st.columns([3, 1])
     with c_title:
@@ -1963,7 +1963,7 @@ with tab_community:
         
         # 2. SCAN BUTTON (ROUTING LOGIC)
         if st.button(f"🔄 SCAN {platform.upper()}", type="primary", use_container_width=True):
-            st.session_state.inbox_comments = [] # Clear old
+            st.session_state.inbox_comments = [] # Clear old list completely to prevent duplicates
             with st.spinner(f"Connecting to {platform}..."):
                 if platform == "YouTube":
                     # Use existing YT function
@@ -1972,7 +1972,10 @@ with tab_community:
                     # Use NEW IG function (Make.com)
                     drafts, sc, ig = scan_instagram_comments(limit=scan_qty)
                 
-                st.session_state.inbox_comments = drafts
+                # Deduplicate list just in case API sent doubles
+                unique_drafts = {d['id']: d for d in drafts}.values()
+                st.session_state.inbox_comments = list(unique_drafts)
+                
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
 
@@ -1989,9 +1992,9 @@ with tab_community:
         if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
             progress = st.progress(0)
             for i, item in enumerate(st.session_state.inbox_comments):
-                final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
+                final_text = st.session_state.get(f"reply_{item['id']}_{i}", item['draft'])
                 
-                # Route to correct function based on item platform
+                # Route to correct function
                 if item.get('platform') == 'instagram':
                     post_instagram_reply(item['id'], final_text)
                 else:
@@ -2014,17 +2017,18 @@ with tab_community:
                     # Platform Icon
                     icon = "📸" if item.get('platform') == 'instagram' else "🟥"
                     st.markdown(f"**{icon} {item['author']}**")
-                    # Make usually sends full caption or empty, handle gracefully
                     video_title = item.get('video', 'Post')[:40] + "..." if len(item.get('video', '')) > 40 else item.get('video', 'Post')
                     st.caption(f"Post: *{video_title}*")
                     st.info(f"\"{item['text']}\"")
                 
                 with c_edit:
-                    new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}", height=100)
+                    # FIX: Added _{i} to the key to guarantee uniqueness
+                    new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}_{i}", height=100)
                 
                 with c_act:
                     st.write("")
-                    if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
+                    # FIX: Added _{i} to button keys too
+                    if st.button("✅ Send", key=f"btn_send_{item['id']}_{i}", use_container_width=True):
                         # Route Single Reply
                         success = False
                         if item.get('platform') == 'instagram':
@@ -2038,7 +2042,7 @@ with tab_community:
                         else:
                             st.error("Failed")
                     
-                    if st.button("🗑️ Ignore", key=f"btn_ign_{item['id']}", use_container_width=True):
+                    if st.button("🗑️ Ignore", key=f"btn_ign_{item['id']}_{i}", use_container_width=True):
                          st.session_state.inbox_comments.pop(i); st.rerun()
     else:
         st.info(f"👋 Ready to scan {st.session_state.comm_platform}.")
@@ -2435,6 +2439,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
