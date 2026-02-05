@@ -1895,7 +1895,7 @@ def scan_instagram_comments(limit=20):
         return [], 0, 0
 
     try:
-        # 1. Ask Make for data (Send limit just in case, though your scenario is hardcoded to 5 for now)
+        # 1. Ask Make for data
         response = requests.post(url, json={"limit": limit})
         
         # 2. Clean JSON
@@ -1904,11 +1904,24 @@ def scan_instagram_comments(limit=20):
         
         pending_list = []
         for c in comments:
-            # Basic validation
-            if not isinstance(c, dict) or "text" not in c: continue
+            # --- 👻 GHOST BUSTER FILTER ---
+            # 1. Check if it's a real dictionary
+            if not isinstance(c, dict): 
+                continue
+            
+            # 2. Check if 'text' exists and is not empty/whitespace
+            raw_text = c.get("text", "")
+            if not raw_text or str(raw_text).strip() == "": 
+                continue
+
+            # 3. Check if 'author' exists
+            author_name = c.get("author", "")
+            if not author_name or str(author_name).strip() == "":
+                continue
+            # ------------------------------
             
             # AI Draft Logic
-            prompt = f"Reply to Instagram comment: '{c.get('text')}'. Context: Paranormal TV Show. Keep it short & spooky."
+            prompt = f"Reply to Instagram comment: '{raw_text}'. Context: Paranormal TV Show. Keep it short & spooky."
             try:
                 ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
             except: 
@@ -1916,8 +1929,8 @@ def scan_instagram_comments(limit=20):
 
             pending_list.append({
                 "id": c.get("id"),
-                "author": c.get("author", "Fan"),
-                "text": c.get("text"),
+                "author": author_name,
+                "text": raw_text,
                 "video": "Instagram Post", 
                 "draft": ai_reply,
                 "date": c.get("timestamp", str(datetime.now())),
@@ -2439,6 +2452,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
