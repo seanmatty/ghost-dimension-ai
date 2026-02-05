@@ -23,6 +23,8 @@ import dropbox #
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import re
+import json
 
 # 1. PAGE CONFIG & THEME
 st.set_page_config(page_title="Ghost Dimension AI", page_icon="👻", layout="wide")
@@ -1872,23 +1874,104 @@ with tab_inspo:
                             st.cache_data.clear(); st.rerun()
     else:
         st.info("🎉 Inbox Zero! Click 'HUNT' to find new ideas.")
-# --- TAB 7: COMMUNITY MANAGER ---
+# --- MAKE.COM INTEGRATION HELPERS ---
+def clean_make_json(text_response):
+    """Fixes trailing commas that Make.com aggregators often leave behind."""
+    try:
+        return json.loads(text_response)
+    except:
+        # Regex to remove trailing comma before a closing bracket/brace
+        cleaned = re.sub(r',\s*([\]}])', r'\1', text_response)
+        try:
+            return json.loads(cleaned)
+        except:
+            return {"data": []}
+
+def scan_instagram_comments(limit=20):
+    """Hits Make.com -> Gets IG Comments -> Returns formatted list"""
+    url = st.secrets.get("MAKE_WEBHOOK_IG_SCAN")
+    if not url: 
+        st.error("❌ Missing MAKE_WEBHOOK_IG_SCAN in secrets.toml")
+        return [], 0, 0
+
+    try:
+        # 1. Ask Make for data (Send limit just in case, though your scenario is hardcoded to 5 for now)
+        response = requests.post(url, json={"limit": limit})
+        
+        # 2. Clean JSON
+        data = clean_make_json(response.text)
+        comments = data.get("data", [])
+        
+        pending_list = []
+        for c in comments:
+            # Basic validation
+            if not isinstance(c, dict) or "text" not in c: continue
+            
+            # AI Draft Logic
+            prompt = f"Reply to Instagram comment: '{c.get('text')}'. Context: Paranormal TV Show. Keep it short & spooky."
+            try:
+                ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
+            except: 
+                ai_reply = "Thanks for watching! 👻"
+
+            pending_list.append({
+                "id": c.get("id"),
+                "author": c.get("author", "Fan"),
+                "text": c.get("text"),
+                "video": "Instagram Post", 
+                "draft": ai_reply,
+                "date": c.get("timestamp", str(datetime.now())),
+                "platform": "instagram"
+            })
+            
+        return pending_list, len(comments), 0
+
+    except Exception as e:
+        st.error(f"IG Scan Error: {e}")
+        return [], 0, 0
+
+def post_instagram_reply(comment_id, reply_text):
+    """Sends reply back to Make.com"""
+    url = st.secrets.get("MAKE_WEBHOOK_IG_REPLY")
+    if not url:
+        st.error("❌ Missing MAKE_WEBHOOK_IG_REPLY in secrets.toml")
+        return False
+        
+    try:
+        requests.post(url, json={"id": comment_id, "text": reply_text})
+        return True
+    except:
+        return False
+
+# --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM) ---
 with tab_community:
     c_title, c_scan = st.columns([3, 1])
     with c_title:
         st.subheader("💬 Community Inbox")
     
-    # Session State
+    # Session State Init
     if "inbox_comments" not in st.session_state: st.session_state.inbox_comments = []
     if "scan_stats" not in st.session_state: st.session_state.scan_stats = {"scanned": 0, "ignored": 0}
+    if "comm_platform" not in st.session_state: st.session_state.comm_platform = "YouTube"
 
     with c_scan:
-        # Note: This limit is how many you WANT TO SEE, not how many it scans (it always scans 100 now)
-        scan_qty = st.selectbox("Show Top X Unanswered", [10, 20, 50], index=1, label_visibility="collapsed")
+        # 1. PLATFORM SELECTOR
+        platform = st.selectbox("Platform", ["YouTube", "Instagram"], index=0, label_visibility="collapsed")
+        st.session_state.comm_platform = platform
         
-        if st.button("🔄 SCAN CHANNEL", type="primary", use_container_width=True):
-            with st.spinner("Analyzing last 100 interactions..."):
-                drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
+        scan_qty = st.selectbox("Depth", [10, 20, 50], index=1, label_visibility="collapsed")
+        
+        # 2. SCAN BUTTON (ROUTING LOGIC)
+        if st.button(f"🔄 SCAN {platform.upper()}", type="primary", use_container_width=True):
+            st.session_state.inbox_comments = [] # Clear old
+            with st.spinner(f"Connecting to {platform}..."):
+                if platform == "YouTube":
+                    # Use existing YT function
+                    drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
+                else:
+                    # Use NEW IG function (Make.com)
+                    drafts, sc, ig = scan_instagram_comments(limit=scan_qty)
+                
                 st.session_state.inbox_comments = drafts
                 st.session_state.scan_stats = {"scanned": sc, "ignored": ig}
                 st.rerun()
@@ -1896,56 +1979,69 @@ with tab_community:
     # --- SHOW STATS ---
     if st.session_state.scan_stats['scanned'] > 0:
         s = st.session_state.scan_stats
-        st.caption(f"📊 **Deep Scan Report:** Analyzed last **{s['scanned']}** channel events. Ignored **{s['ignored']}** (already replied/yours). Showing newest **{len(st.session_state.inbox_comments)}** requiring attention.")
+        st.caption(f"📊 Report: Scanned **{s['scanned']}** items. Ignored **{s['ignored']}**. Inbox: **{len(st.session_state.inbox_comments)}**.")
 
-    # --- INBOX LOGIC ---
+    # --- INBOX DISPLAY ---
     if st.session_state.inbox_comments:
         count = len(st.session_state.inbox_comments)
         
+        # APPROVE ALL BUTTON
         if st.button(f"🚀 APPROVE ALL ({count})", type="primary"):
             progress = st.progress(0)
             for i, item in enumerate(st.session_state.inbox_comments):
                 final_text = st.session_state.get(f"reply_{item['id']}", item['draft'])
-                post_comment_reply(item['id'], final_text)
+                
+                # Route to correct function based on item platform
+                if item.get('platform') == 'instagram':
+                    post_instagram_reply(item['id'], final_text)
+                else:
+                    post_comment_reply(item['id'], final_text)
+                    
                 progress.progress((i + 1) / count)
                 import time; time.sleep(1.0)
             
             st.session_state.inbox_comments = []
-            st.success("🎉 All replies sent!")
-            st.rerun()
+            st.success("🎉 Done!"); st.rerun()
 
         st.divider()
 
+        # INDIVIDUAL COMMENT CARDS
         for i, item in enumerate(st.session_state.inbox_comments):
             with st.container(border=True):
                 c_info, c_edit, c_act = st.columns([2, 3, 1])
                 
                 with c_info:
-                    st.markdown(f"**👤 {item['author']}**")
-                    st.caption(f" on: *{item['video']}*")
+                    # Platform Icon
+                    icon = "📸" if item.get('platform') == 'instagram' else "🟥"
+                    st.markdown(f"**{icon} {item['author']}**")
+                    # Make usually sends full caption or empty, handle gracefully
+                    video_title = item.get('video', 'Post')[:40] + "..." if len(item.get('video', '')) > 40 else item.get('video', 'Post')
+                    st.caption(f"Post: *{video_title}*")
                     st.info(f"\"{item['text']}\"")
-                    # Show date to confirm sorting works
-                    st.caption(f"📅 {item['date'][:10]} {item['date'][11:16]}")
                 
                 with c_edit:
-                    new_draft = st.text_area("Reply Draft", value=item['draft'], key=f"reply_{item['id']}", height=100)
+                    new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}", height=100)
                 
                 with c_act:
-                    st.write("") 
+                    st.write("")
                     if st.button("✅ Send", key=f"btn_send_{item['id']}", use_container_width=True):
-                        if post_comment_reply(item['id'], new_draft):
-                            st.toast(f"Replied to {item['author']}!")
-                            st.session_state.inbox_comments.pop(i)
-                            st.rerun()
+                        # Route Single Reply
+                        success = False
+                        if item.get('platform') == 'instagram':
+                            success = post_instagram_reply(item['id'], new_draft)
+                        else:
+                            success = post_comment_reply(item['id'], new_draft)
                             
-                    if st.button("🗑️ Ignore", key=f"btn_del_{item['id']}", use_container_width=True):
-                        st.session_state.inbox_comments.pop(i)
-                        st.rerun()
+                        if success:
+                            st.toast("Sent!")
+                            st.session_state.inbox_comments.pop(i); st.rerun()
+                        else:
+                            st.error("Failed")
+                    
+                    if st.button("🗑️ Ignore", key=f"btn_ign_{item['id']}", use_container_width=True):
+                         st.session_state.inbox_comments.pop(i); st.rerun()
     else:
-        if st.session_state.scan_stats['scanned'] > 0:
-            st.success("🎉 You are all caught up! No unanswered comments found in the last 100 events.")
-        else:
-            st.info("👋 Click SCAN to check your channel.")
+        st.info(f"👋 Ready to scan {st.session_state.comm_platform}.")
         
 # --- COMMAND CENTER ---
 st.markdown("---")
@@ -2339,6 +2435,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
