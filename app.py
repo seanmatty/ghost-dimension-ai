@@ -143,14 +143,13 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (VIRAL YELLOW + BIG TEXT) ---
+# --- THUMBNAIL ENGINE (VIRAL YELLOW + SAFETY WRAP) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
     """
-    Upgraded Engine:
+    Upgraded Engine v2:
     - Color: VIRAL YELLOW (#FFFF00)
-    - Size: Massive (25-30% of screen)
-    - Font: Forces a Bold TrueType font (fixes the "tiny text" bug)
-    - Border: Thick Black Stroke + Deep Shadow
+    - Size: Massive (22% of screen) - reduced slightly to prevent overflow
+    - Wrap Logic: Aggressive wrapping for wide BOLD fonts
     """
     import textwrap
     from PIL import ImageEnhance, ImageFilter, ImageDraw, ImageFont, ImageOps, Image
@@ -177,7 +176,6 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         is_landscape = width > height
 
         # --- 1. IMAGE ENHANCEMENT ---
-        # Boost Contrast/Sharpness
         contrast_val = 1.3 if is_landscape else 1.1
         enhancer = ImageEnhance.Contrast(pil_img)
         pil_img = enhancer.enhance(contrast_val) 
@@ -196,52 +194,41 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
 
-            # 🛑 FONT SIZING (MASSIVE UPGRADE)
-            # Landscape: 25% of height
-            # Vertical: 25% of WIDTH (Fixes the small text on mobile)
+            # 🛑 SIZE TWEAK: 22% instead of 25% (Safer)
             if is_landscape:
-                fontsize = int(height * 0.25) 
+                fontsize = int(height * 0.22) 
             else:
-                fontsize = int(width * 0.25)
+                fontsize = int(width * 0.22)
 
-            # 🛑 ROBUST FONT LOADER (Fixes the "tiny default font" bug)
+            # 🛑 ROBUST FONT LOADER
             def load_font(size):
-                # Extensive list of bold fonts for Windows, Mac, and Linux (Streamlit Cloud)
                 font_candidates = [
-                    # Linux / Streamlit Cloud Paths
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans-ExtraBold.ttf",
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-                    # Windows / Local Paths
-                    "impact.ttf", "Impact.ttf", 
-                    "Arial Black.ttf", "arialbd.ttf", 
-                    "Verdana Bold.ttf"
+                    "impact.ttf", "Impact.ttf", "Arial Black.ttf", "arialbd.ttf"
                 ]
-                
                 for f_path in font_candidates:
                     try:
-                        # Check if file exists (for absolute paths) or try loading (for system paths)
-                        if f_path.startswith("/") and not os.path.exists(f_path):
-                            continue
+                        if f_path.startswith("/") and not os.path.exists(f_path): continue
                         return ImageFont.truetype(f_path, size)
                     except: continue
-                
-                # If all else fails, try to load standard arial by name
                 try: return ImageFont.truetype("arial.ttf", size)
-                except: return ImageFont.load_default() # This is the tiny fallback we want to avoid
+                except: return ImageFont.load_default()
 
             font = load_font(fontsize)
 
-            # Text Wrapping (Adjusted for BIG text)
-            safe_width_ratio = 0.90
-            # Calculate approx chars that fit
-            avg_char_w = fontsize * 0.5 
-            chars_per_line = int((width * safe_width_ratio) / avg_char_w)
-            if chars_per_line < 4: chars_per_line = 4 # Prevent crash on super zoom
+            # 🛑 WRAPPING FIX: Assume characters are WIDE (0.7 instead of 0.5)
+            # This forces the text to wrap sooner so it doesn't fall off.
+            safe_width = width * 0.90 # Keep 5% margin on each side
+            avg_char_w = fontsize * 0.7 
+            
+            chars_per_line = int(safe_width / avg_char_w)
+            if chars_per_line < 4: chars_per_line = 4 
             
             lines = textwrap.wrap(overlay_text.upper(), width=chars_per_line) 
 
-            # Calculate height to center it
+            # Calculate height
             bbox = draw.textbbox((0, 0), "A", font=font)
             line_h = bbox[3] - bbox[1]
             total_h = (line_h * len(lines)) + (20 * (len(lines)-1))
@@ -254,14 +241,12 @@ def create_thumbnail(video_url, time_sec, overlay_text):
                 pos_x = (width - l_w) / 2
                 pos_y = start_y + (i * (line_h + 20))
 
-                # EFFECTS: Thick Stroke + Deep Shadow
-                
-                # 1. Hard Drop Shadow (Offset Black)
+                # Shadow
                 shadow_off = int(fontsize * 0.1)
                 draw.text((pos_x + shadow_off, pos_y + shadow_off), line, font=font, fill="black")
 
-                # 2. Main Text (Yellow with Black Outline)
-                stroke_w = int(fontsize * 0.08) # 8% Stroke thickness
+                # Main Text
+                stroke_w = int(fontsize * 0.08)
                 draw.text((pos_x, pos_y), line, font=font, fill="#FFFF00", stroke_width=stroke_w, stroke_fill="black")
 
     except Exception as e:
@@ -2616,6 +2601,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
