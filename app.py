@@ -2009,24 +2009,33 @@ def scan_facebook_comments(limit=20):
             if not isinstance(c, dict): continue
             raw_text = c.get("message", "") 
             author_name = c.get("author", "")
+            
             if not raw_text or str(raw_text).strip() == "" or not author_name: continue
             if c.get("id") in handled_ids: continue 
 
-            # --- STRICT PROMPT ---
+            # --- STRICT "ROBOT MODE" PROMPT ---
             prompt = f"""
-            Act as the Social Media Manager for 'Ghost Dimension' (Paranormal TV Show).
-            Task: Write ONE single, short reply to this Facebook comment: "{raw_text}"
+            You are an automated social media tool for 'Ghost Dimension' (Paranormal TV Show).
             
-            Rules:
-            1. Output ONLY the reply text. 
-            2. Do NOT say "Here are options" or "I recommend".
-            3. Do NOT provide a list.
-            4. Keep it under 2 sentences.
-            5. Tone: Spooky, polite, engaging. Use 1 emoji (👻, 🕯️, 💀).
+            USER COMMENT: "{raw_text}"
+            
+            YOUR TASK:
+            Write ONE single, short reply to this comment.
+            
+            CRITICAL RULES:
+            1. Output ONLY the final reply text.
+            2. Do NOT say "Here is a reply" or "Option 1".
+            3. Do NOT offer choices.
+            4. Do NOT use quotation marks around the reply.
+            5. Tone: Spooky, fun, or polite. 
+            6. Max length: 15 words.
             """
             try:
                 ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
-            except: ai_reply = "Thanks for watching! 👻"
+                # Double safety: If AI still sends a list, take the first line
+                if "\n" in ai_reply: ai_reply = ai_reply.split("\n")[0]
+            except: 
+                ai_reply = "Thanks for watching! 👻"
 
             pending_list.append({
                 "id": c.get("id"),
@@ -2563,6 +2572,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
