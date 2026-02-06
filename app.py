@@ -1968,7 +1968,77 @@ def mark_instagram_handled(comment_id, action="replied"):
     except Exception as e:
         st.error(f"Log Error: {e}")
 
-# --- TAB 7: COMMUNITY MANAGER (MULTI-PLATFORM & CRASH PROOF) ---
+# --- FACEBOOK MEMORY & INTEGRATION ---
+def get_facebook_handled_ids():
+    """Fetches list of FB comment IDs we have handled."""
+    try:
+        response = supabase.table("facebook_logs").select("comment_id").execute()
+        return {row['comment_id'] for row in response.data}
+    except:
+        return set()
+
+def mark_facebook_handled(comment_id, action="replied"):
+    """Logs FB ID to Supabase."""
+    try:
+        supabase.table("facebook_logs").insert({
+            "comment_id": comment_id,
+            "action": action
+        }).execute()
+    except Exception as e: st.error(f"Log Error: {e}")
+
+def post_facebook_reply(comment_id, reply_text):
+    """Sends reply to Make.com FB Scenario"""
+    url = st.secrets.get("MAKE_WEBHOOK_FB_REPLY")
+    try:
+        requests.post(url, json={"id": comment_id, "text": reply_text})
+        return True
+    except: return False
+
+def scan_facebook_comments(limit=20):
+    url = st.secrets.get("MAKE_WEBHOOK_FB_SCAN")
+    if not url: st.error("❌ Missing MAKE_WEBHOOK_FB_SCAN"); return [], 0, 0
+
+    try:
+        # 1. Memory Check
+        handled_ids = get_facebook_handled_ids()
+
+        # 2. Fetch from Make
+        response = requests.post(url, json={"limit": limit})
+        data = clean_make_json(response.text)
+        comments = data.get("data", [])
+        
+        pending_list = []
+        for c in comments:
+            # Ghost Buster
+            if not isinstance(c, dict): continue
+            raw_text = c.get("message", "") # FB uses 'message', not 'text'
+            author_name = c.get("author", "")
+            
+            if not raw_text or str(raw_text).strip() == "" or not author_name: continue
+            if c.get("id") in handled_ids: continue # Skip if done
+
+            # AI Draft
+            prompt = f"Reply to FB comment: '{raw_text}'. Context: Ghost Dimension. Spooky."
+            try:
+                ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
+            except: ai_reply = "Thanks for watching! 👻"
+
+            pending_list.append({
+                "id": c.get("id"),
+                "author": author_name,
+                "text": raw_text,
+                "video": "Facebook Post", 
+                "draft": ai_reply,
+                "date": c.get("timestamp", str(datetime.now())),
+                "platform": "facebook"
+            })
+            
+        return pending_list, len(comments), 0
+
+    except Exception as e:
+        st.error(f"FB Scan Error: {e}"); return [], 0, 0
+
+# --- TAB 7: COMMUNITY MANAGER (ALL PLATFORMS) ---
 with tab_community:
     c_title, c_scan = st.columns([3, 1])
     with c_title:
@@ -1980,24 +2050,27 @@ with tab_community:
     if "comm_platform" not in st.session_state: st.session_state.comm_platform = "YouTube"
 
     with c_scan:
-        # 1. PLATFORM SELECTOR
-        platform = st.selectbox("Platform", ["YouTube", "Instagram"], index=0, label_visibility="collapsed")
+        # 1. PLATFORM SELECTOR (NOW WITH FACEBOOK)
+        platform = st.selectbox("Platform", ["YouTube", "Instagram", "Facebook"], index=0, label_visibility="collapsed")
         st.session_state.comm_platform = platform
         
         scan_qty = st.selectbox("Depth", [10, 20, 50], index=1, label_visibility="collapsed")
         
         # 2. SCAN BUTTON (ROUTING LOGIC)
         if st.button(f"🔄 SCAN {platform.upper()}", type="primary", use_container_width=True):
-            st.session_state.inbox_comments = [] # Clear old list completely to prevent duplicates
+            st.session_state.inbox_comments = [] # Clear old
             with st.spinner(f"Connecting to {platform}..."):
-                if platform == "YouTube":
-                    # Use existing YT function
-                    drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
-                else:
-                    # Use NEW IG function (Make.com)
-                    drafts, sc, ig = scan_instagram_comments(limit=scan_qty)
                 
-                # Deduplicate list just in case API sent doubles
+                # --- ROUTER ---
+                if platform == "YouTube":
+                    drafts, sc, ig = scan_comments_for_review(limit=scan_qty)
+                elif platform == "Instagram":
+                    drafts, sc, ig = scan_instagram_comments(limit=scan_qty)
+                elif platform == "Facebook":
+                    drafts, sc, ig = scan_facebook_comments(limit=scan_qty)
+                # --------------
+
+                # Deduplicate
                 unique_drafts = {d['id']: d for d in drafts}.values()
                 st.session_state.inbox_comments = list(unique_drafts)
                 
@@ -2019,12 +2092,16 @@ with tab_community:
             for i, item in enumerate(st.session_state.inbox_comments):
                 final_text = st.session_state.get(f"reply_{item['id']}_{i}", item['draft'])
                 
-                # Route to correct function
+                # --- BULK ROUTER ---
                 if item.get('platform') == 'instagram':
                     post_instagram_reply(item['id'], final_text)
-                    mark_instagram_handled(item['id'], "replied") # <--- NEW LOGGING
+                    mark_instagram_handled(item['id'], "replied")
+                elif item.get('platform') == 'facebook':
+                    post_facebook_reply(item['id'], final_text)
+                    mark_facebook_handled(item['id'], "replied")
                 else:
                     post_comment_reply(item['id'], final_text)
+                # -------------------
                     
                 progress.progress((i + 1) / count)
                 import time; time.sleep(1.0)
@@ -2040,30 +2117,37 @@ with tab_community:
                 c_info, c_edit, c_act = st.columns([2, 3, 1])
                 
                 with c_info:
-                    # Platform Icon
-                    icon = "📸" if item.get('platform') == 'instagram' else "🟥"
+                    # Platform Icon Logic
+                    p_type = item.get('platform', 'youtube')
+                    if p_type == 'instagram': icon = "📸"
+                    elif p_type == 'facebook': icon = "📘"
+                    else: icon = "🟥"
+                    
                     st.markdown(f"**{icon} {item['author']}**")
-                    # Handle varying caption lengths safely
-                    vid_txt = item.get('video', 'Post')
-                    video_title = vid_txt[:40] + "..." if len(vid_txt) > 40 else vid_txt
+                    video_title = item.get('video', 'Post')[:40] + "..." if len(item.get('video', '')) > 40 else item.get('video', 'Post')
                     st.caption(f"Post: *{video_title}*")
                     st.info(f"\"{item['text']}\"")
                 
                 with c_edit:
-                    # Keep your Unique Key fix
                     new_draft = st.text_area("Reply", value=item['draft'], key=f"reply_{item['id']}_{i}", height=100)
                 
                 with c_act:
                     st.write("")
-                    # Keep Unique Key fix
                     if st.button("✅ Send", key=f"btn_send_{item['id']}_{i}", use_container_width=True):
-                        # Route Single Reply
                         success = False
+                        
+                        # --- SINGLE ROUTER ---
                         if item.get('platform') == 'instagram':
                             success = post_instagram_reply(item['id'], new_draft)
-                            if success: mark_instagram_handled(item['id'], "replied") # <--- NEW LOGGING
+                            if success: mark_instagram_handled(item['id'], "replied")
+                        
+                        elif item.get('platform') == 'facebook':
+                            success = post_facebook_reply(item['id'], new_draft)
+                            if success: mark_facebook_handled(item['id'], "replied")
+                            
                         else:
                             success = post_comment_reply(item['id'], new_draft)
+                        # ---------------------
                             
                         if success:
                             st.toast("Sent!")
@@ -2072,14 +2156,15 @@ with tab_community:
                             st.error("Failed")
                     
                     if st.button("🗑️ Ignore", key=f"btn_ign_{item['id']}_{i}", use_container_width=True):
-                         # Log Ignore only for Insta
+                         # Log Ignore for Insta/FB
                          if item.get('platform') == 'instagram':
-                             mark_instagram_handled(item['id'], "ignored") # <--- NEW LOGGING
-                         
+                             mark_instagram_handled(item['id'], "ignored")
+                         elif item.get('platform') == 'facebook':
+                             mark_facebook_handled(item['id'], "ignored")
+                             
                          st.session_state.inbox_comments.pop(i); st.rerun()
     else:
         st.info(f"👋 Ready to scan {st.session_state.comm_platform}.")
-        
 # --- COMMAND CENTER ---
 st.markdown("---")
 st.markdown("<h2 style='text-align: center;'>📲 COMMAND CENTER (DEBUG MODE)</h2>", unsafe_allow_html=True)
@@ -2472,6 +2557,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
