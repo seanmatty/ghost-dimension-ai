@@ -1999,26 +1999,31 @@ def scan_facebook_comments(limit=20):
     if not url: st.error("❌ Missing MAKE_WEBHOOK_FB_SCAN"); return [], 0, 0
 
     try:
-        # 1. Memory Check
         handled_ids = get_facebook_handled_ids()
-
-        # 2. Fetch from Make
         response = requests.post(url, json={"limit": limit})
         data = clean_make_json(response.text)
         comments = data.get("data", [])
         
         pending_list = []
         for c in comments:
-            # Ghost Buster
             if not isinstance(c, dict): continue
-            raw_text = c.get("message", "") # FB uses 'message', not 'text'
+            raw_text = c.get("message", "") 
             author_name = c.get("author", "")
-            
             if not raw_text or str(raw_text).strip() == "" or not author_name: continue
-            if c.get("id") in handled_ids: continue # Skip if done
+            if c.get("id") in handled_ids: continue 
 
-            # AI Draft
-            prompt = f"Reply to FB comment: '{raw_text}'. Context: Ghost Dimension. Spooky."
+            # --- STRICT PROMPT ---
+            prompt = f"""
+            Act as the Social Media Manager for 'Ghost Dimension' (Paranormal TV Show).
+            Task: Write ONE single, short reply to this Facebook comment: "{raw_text}"
+            
+            Rules:
+            1. Output ONLY the reply text. 
+            2. Do NOT say "Here are options" or "I recommend".
+            3. Do NOT provide a list.
+            4. Keep it under 2 sentences.
+            5. Tone: Spooky, polite, engaging. Use 1 emoji (👻, 🕯️, 💀).
+            """
             try:
                 ai_reply = google_client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text.strip().replace('"','')
             except: ai_reply = "Thanks for watching! 👻"
@@ -2036,7 +2041,8 @@ def scan_facebook_comments(limit=20):
         return pending_list, len(comments), 0
 
     except Exception as e:
-        st.error(f"FB Scan Error: {e}"); return [], 0, 0
+        st.error(f"FB Scan Error: {e}")
+        return [], 0, 0
 
 # --- TAB 7: COMMUNITY MANAGER (ALL PLATFORMS) ---
 with tab_community:
@@ -2557,6 +2563,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
