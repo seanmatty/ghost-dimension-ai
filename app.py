@@ -143,88 +143,124 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (SAFE MARGINS) ---
+# --- THUMBNAIL ENGINE (SMART DETECT: CINEMATIC LANDSCAPE vs CLEAN VERTICAL) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
-    """Extracts a frame, wraps text with safe margins, and draws it."""
+    """
+    Smart Thumbnail Engine:
+    - Detects if video is Landscape or Vertical.
+    - Landscape: Adds Cinematic Vignette, High Contrast, & 3D Impact Text.
+    - Vertical: Adds Mild Contrast & Clean Text (No dark corners) for Shorts safety.
+    """
     import textwrap
-    
+    from PIL import ImageEnhance, ImageFilter, ImageDraw, ImageFont, ImageOps, Image
+
     try:
         # Clean Dropbox Link
         if "dropbox.com" in video_url:
             video_url = video_url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "").replace("?dl=1", "")
-        
+
         cap = cv2.VideoCapture(video_url)
         cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
         ret, frame = cap.read()
         cap.release()
-        
+
         if not ret: return None
 
         # Convert to PIL
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img)
+        width, height = pil_img.size
         
+        # 🟢 DETECT ORIENTATION
+        is_landscape = width > height
+
+        # --- 1. IMAGE ENHANCEMENT ---
+        # A. Boost Contrast (Make it pop)
+        # Landscape gets a harder boost (1.3), Vertical gets a mild boost (1.1)
+        contrast_val = 1.3 if is_landscape else 1.1
+        enhancer = ImageEnhance.Contrast(pil_img)
+        pil_img = enhancer.enhance(contrast_val) 
+
+        # B. Boost Sharpness (Crisp details)
+        enhancer = ImageEnhance.Sharpness(pil_img)
+        pil_img = enhancer.enhance(1.5)
+
+        # C. Cinematic Vignette (ONLY FOR LANDSCAPE)
+        if is_landscape:
+            # Create a black layer
+            vignette = Image.new('L', (width, height), 0)
+            draw_v = ImageDraw.Draw(vignette)
+            # Draw a white ellipse in the center (Safe area)
+            draw_v.ellipse((width*0.1, height*0.1, width*0.9, height*0.9), fill=255)
+            # Blur the mask to create the gradient
+            vignette = vignette.filter(ImageFilter.GaussianBlur(radius=min(width, height)*0.2))
+            # Invert mask (Corners white/opaque, center black/transparent)
+            vignette_inv = ImageOps.invert(vignette)
+            # Create black overlay
+            black_layer = Image.new('RGB', (width, height), (0, 0, 0))
+            # Composite: Darken the original image edges
+            pil_img = Image.composite(black_layer, pil_img, vignette_inv)
+
+        # --- 2. TEXT RENDERING ---
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
-            
-            # 1. Setup Font based on WIDTH (Prevents overflow on vertical vids)
-            # Target size: 12% of the screen width
-            fontsize = int(pil_img.width * 0.12) 
-            
+
+            # Font Sizing Logic
+            if is_landscape:
+                # Big Impact for Landscape (15% of height)
+                fontsize = int(height * 0.15) 
+            else:
+                # Smaller, safer font for Vertical (15% of width)
+                fontsize = int(width * 0.15)
+
             def load_font(size):
-                font_candidates = ["arial.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"]
+                # Try to find a bold/impact font system-wide
+                font_candidates = ["Impact.ttf", "impact.ttf", "Arial Black.ttf", "arialbd.ttf", "DejaVuSans-Condensed-Bold.ttf"]
                 for f_name in font_candidates:
                     try: return ImageFont.truetype(f_name, size)
                     except: continue
                 return ImageFont.load_default()
-            
-            font = load_font(fontsize)
-            
-            # 2. Text Wrapping Logic with Margins
-            # We want 10% margin total (5% left, 5% right)
-            safe_width = pil_img.width * 0.90
-            
-            # Estimate char width (0.6 is a safer multiplier for bold fonts)
-            avg_char_width = fontsize * 0.6
-            chars_per_line = int(safe_width / avg_char_width)
-            
-            # Wrap the text
-            lines = textwrap.wrap(overlay_text, width=chars_per_line)
-            
-            # 3. Calculate Block Height to Center Vertically
-            # Get height of a single line
-            sample_bbox = draw.textbbox((0, 0), "A", font=font)
-            line_height = sample_bbox[3] - sample_bbox[1]
-            # Total height = lines + gaps
-            total_height = (line_height * len(lines)) + (15 * (len(lines) - 1))
-            
-            # Start Y position
-            start_y = (pil_img.height - total_height) / 2
-            
-            # 4. Draw Each Line
-            for i, line in enumerate(lines):
-                # Measure line width to center horizontally
-                line_bbox = draw.textbbox((0, 0), line, font=font)
-                line_w = line_bbox[2] - line_bbox[0]
-                
-                # Center X
-                pos_x = (pil_img.width - line_w) / 2
-                # Calc Y
-                pos_y = start_y + (i * (line_height + 15))
-                
-                # Draw Thick Outline
-                outline = max(2, int(fontsize / 15))
-                for adj_x in range(-outline, outline+1):
-                    for adj_y in range(-outline, outline+1):
-                        draw.text((pos_x+adj_x, pos_y+adj_y), line, font=font, fill="black")
-                
-                # Draw Text
-                draw.text((pos_x, pos_y), line, font=font, fill="#00ff41")
 
-        return pil_img
+            font = load_font(fontsize)
+
+            # Text Wrapping
+            # We use a slightly tighter margin for vertical
+            safe_width_ratio = 0.85 if is_landscape else 0.90
+            chars_per_line = int((width * safe_width_ratio) / (fontsize * 0.5))
+            if chars_per_line < 5: chars_per_line = 5 # Safety net
+            
+            lines = textwrap.wrap(overlay_text.upper(), width=chars_per_line) 
+
+            # Calculate total block height
+            bbox = draw.textbbox((0, 0), "A", font=font)
+            line_h = bbox[3] - bbox[1]
+            total_h = (line_h * len(lines)) + (20 * (len(lines)-1))
+
+            # Start Y (Center for maximum clickability)
+            start_y = (height - total_h) / 2
+
+            # Draw Lines
+            for i, line in enumerate(lines):
+                # Center X
+                l_bbox = draw.textbbox((0,0), line, font=font)
+                l_w = l_bbox[2] - l_bbox[0]
+                pos_x = (width - l_w) / 2
+                pos_y = start_y + (i * (line_h + 20))
+
+                # --- EFFECTS ---
+                # 1. Hard Drop Shadow (Offset Black)
+                shadow_offset = int(fontsize * 0.08)
+                draw.text((pos_x + shadow_offset, pos_y + shadow_offset), line, font=font, fill="black")
+
+                # 2. Main Text with Stroke
+                stroke_w = int(fontsize * 0.05) # Thick stroke
+                draw.text((pos_x, pos_y), line, font=font, fill="#00ff41", stroke_width=stroke_w, stroke_fill="black")
+
     except Exception as e:
         st.error(f"Thumbnail Error: {e}")
         return None
+    
+    return pil_img
 # --- GLOBAL OPTIONS ---
 STRATEGY_OPTIONS = ["🎲 AI Choice (Promotional)", "🔥 Viral / Debate (Ask Questions)", "🕵️ Investigator (Analyze Detail)", "📖 Storyteller (Creepypasta)", "😱 Pure Panic (Short & Scary)"]
 
@@ -2572,6 +2608,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
