@@ -143,13 +143,14 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (SMART SCALING + NO BROKEN WORDS) ---
+# --- THUMBNAIL ENGINE (NO OVERFLOW - SAFETY FIRST) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
     """
-    Final Engine:
-    - Landscape: Huge, Viral Text (20% size).
-    - Vertical: Safe, Readable Text (16% size) so words don't break.
-    - Logic: 'break_long_words=False' prevents "C RAZY" splits.
+    Final Engine v3:
+    - Fixes "Text off edge" by assuming letters are WIDE.
+    - Vertical: Font reduced to 13% for safety.
+    - Landscape: Font stays big (20%).
+    - Margins: Increased to keep text centered and safe.
     """
     import textwrap
     from PIL import ImageEnhance, ImageFilter, ImageDraw, ImageFont, ImageOps, Image
@@ -194,13 +195,13 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
 
-            # 🛑 SMART SIZING
-            # Landscape: 20% (Big & Viral)
-            # Vertical: 16% (Fits words like "CRAZY" without splitting)
+            # 🛑 FONT SIZING
+            # Landscape: 20% (Big)
+            # Vertical: 13% (Safe - prevents overflow)
             if is_landscape:
                 fontsize = int(height * 0.20) 
             else:
-                fontsize = int(width * 0.16) 
+                fontsize = int(width * 0.13) 
 
             # 🛑 ROBUST FONT LOADER
             def load_font(size):
@@ -220,14 +221,18 @@ def create_thumbnail(video_url, time_sec, overlay_text):
 
             font = load_font(fontsize)
 
-            # 🛑 WRAP LOGIC
-            safe_width = width * 0.90
-            avg_char_w = fontsize * 0.55 # Slightly looser estimate
+            # 🛑 SAFETY WRAP LOGIC
+            # We assume letters are '0.7' width (Very Wide) to force early wrapping.
+            # This makes the text stack vertically instead of running off the side.
+            safe_width_ratio = 0.85 # Keep 15% margin total
+            safe_pixel_width = width * safe_width_ratio
             
-            chars_per_line = int(safe_width / avg_char_w)
-            if chars_per_line < 5: chars_per_line = 5
+            avg_char_w = fontsize * 0.7 
             
-            # KEY FIX: break_long_words=False ensures "CRAZY" stays "CRAZY"
+            chars_per_line = int(safe_pixel_width / avg_char_w)
+            if chars_per_line < 4: chars_per_line = 4
+            
+            # break_long_words=False ensures "CRAZY" stays together
             lines = textwrap.wrap(overlay_text.upper(), width=chars_per_line, break_long_words=False) 
 
             # Calculate height
@@ -2603,6 +2608,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
