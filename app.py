@@ -143,13 +143,13 @@ def upload_to_social_system(local_path, file_name):
     except Exception as e:
         st.error(f"Dropbox Fail: {e}"); return None
 
-# --- THUMBNAIL ENGINE (VIRAL YELLOW + SAFETY WRAP) ---
+# --- THUMBNAIL ENGINE (SMART SCALING + NO BROKEN WORDS) ---
 def create_thumbnail(video_url, time_sec, overlay_text):
     """
-    Upgraded Engine v2:
-    - Color: VIRAL YELLOW (#FFFF00)
-    - Size: Massive (22% of screen) - reduced slightly to prevent overflow
-    - Wrap Logic: Aggressive wrapping for wide BOLD fonts
+    Final Engine:
+    - Landscape: Huge, Viral Text (20% size).
+    - Vertical: Safe, Readable Text (16% size) so words don't break.
+    - Logic: 'break_long_words=False' prevents "C RAZY" splits.
     """
     import textwrap
     from PIL import ImageEnhance, ImageFilter, ImageDraw, ImageFont, ImageOps, Image
@@ -194,11 +194,13 @@ def create_thumbnail(video_url, time_sec, overlay_text):
         if overlay_text:
             draw = ImageDraw.Draw(pil_img)
 
-            # 🛑 SIZE TWEAK: 22% instead of 25% (Safer)
+            # 🛑 SMART SIZING
+            # Landscape: 20% (Big & Viral)
+            # Vertical: 16% (Fits words like "CRAZY" without splitting)
             if is_landscape:
-                fontsize = int(height * 0.22) 
+                fontsize = int(height * 0.20) 
             else:
-                fontsize = int(width * 0.22)
+                fontsize = int(width * 0.16) 
 
             # 🛑 ROBUST FONT LOADER
             def load_font(size):
@@ -218,15 +220,15 @@ def create_thumbnail(video_url, time_sec, overlay_text):
 
             font = load_font(fontsize)
 
-            # 🛑 WRAPPING FIX: Assume characters are WIDE (0.7 instead of 0.5)
-            # This forces the text to wrap sooner so it doesn't fall off.
-            safe_width = width * 0.90 # Keep 5% margin on each side
-            avg_char_w = fontsize * 0.7 
+            # 🛑 WRAP LOGIC
+            safe_width = width * 0.90
+            avg_char_w = fontsize * 0.55 # Slightly looser estimate
             
             chars_per_line = int(safe_width / avg_char_w)
-            if chars_per_line < 4: chars_per_line = 4 
+            if chars_per_line < 5: chars_per_line = 5
             
-            lines = textwrap.wrap(overlay_text.upper(), width=chars_per_line) 
+            # KEY FIX: break_long_words=False ensures "CRAZY" stays "CRAZY"
+            lines = textwrap.wrap(overlay_text.upper(), width=chars_per_line, break_long_words=False) 
 
             # Calculate height
             bbox = draw.textbbox((0, 0), "A", font=font)
@@ -2601,6 +2603,7 @@ with st.expander("🔑 YOUTUBE REFRESH TOKEN GENERATOR (RUN ONCE)"):
                     st.error(f"Failed to get token: {result}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
 
 
 
